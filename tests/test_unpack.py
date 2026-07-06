@@ -2,6 +2,7 @@ import json
 import tarfile
 import zipfile
 from pathlib import Path
+import pytest
 from npm_ide_analyst.acquire.unpack import unpack, detect_artifact_type
 from npm_ide_analyst.models import ArtifactType
 
@@ -38,3 +39,26 @@ def test_unpack_vsix_detects_extension(tmp_path):
         zf.write(stage / "package.json", "extension/package.json")
     root = unpack(vsix, tmp_path / "work")
     assert detect_artifact_type(root) == ArtifactType.EXTENSION
+
+
+def test_unpack_zip_rejects_traversal(tmp_path):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "e.txt").write_text("pwned")
+    vsix = tmp_path / "evil.vsix"
+    with zipfile.ZipFile(vsix, "w") as zf:
+        zf.write(stage / "e.txt", "../escaped.txt")
+    with pytest.raises(ValueError, match="unsafe zip path"):
+        unpack(vsix, tmp_path / "work")
+
+
+def test_unpack_tar_rejects_traversal(tmp_path):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    src = stage / "e.txt"
+    src.write_text("pwned")
+    tgz = tmp_path / "evil.tgz"
+    with tarfile.open(tgz, "w:gz") as tf:
+        tf.add(src, arcname="../escaped.txt")
+    with pytest.raises(ValueError, match="unsafe tar path"):
+        unpack(tgz, tmp_path / "work")

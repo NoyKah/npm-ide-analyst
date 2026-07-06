@@ -10,17 +10,23 @@ from ..models import ArtifactType
 
 
 def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
+    dest_resolved = dest.resolve()
     for member in zf.namelist():
         target = (dest / member).resolve()
-        if not str(target).startswith(str(dest.resolve())):
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError:
             raise ValueError(f"unsafe zip path: {member}")
     zf.extractall(dest)
 
 
 def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
+    dest_resolved = dest.resolve()
     for member in tf.getmembers():
         target = (dest / member.name).resolve()
-        if not str(target).startswith(str(dest.resolve())):
+        try:
+            target.relative_to(dest_resolved)
+        except ValueError:
             raise ValueError(f"unsafe tar path: {member.name}")
     tf.extractall(dest)
 
