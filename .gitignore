@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Superpowers SDD scratch
+.superpowers/
+
+# Analysis working dirs / evidence output
+_work/
+evidence/
+out/
+*.vsix
+*.tgz
+!tests/fixtures/**/*.vsix
+!tests/fixtures/**/*.tgz

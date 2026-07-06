@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>npm-ide-analyst report — {{ r.sample.name }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }
+  .verdict { display: inline-block; padding: .3rem .8rem; border-radius: .4rem;
+             font-weight: 700; color: #fff; }
+  .clean { background: #2e7d32; } .low-risk { background: #f9a825; }
+  .suspicious { background: #ef6c00; } .malicious { background: #c62828; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ddd; padding: .5rem; text-align: left;
+           vertical-align: top; font-size: .9rem; }
+  th { background: #f4f4f4; }
+  .sev-critical { color: #c62828; font-weight: 700; }
+  .sev-high { color: #ef6c00; font-weight: 700; }
+  .sev-medium { color: #f9a825; } .sev-low { color: #666; } .sev-info { color: #999; }
+  code { background: #f4f4f4; padding: 0 .2rem; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>DFIR Report: {{ r.sample.name }} {{ r.sample.version or "" }}</h1>
+<p>Type: {{ r.sample.artifact_type }} ·
+   Verdict: <span class="verdict {{ r.verdict }}">{{ r.verdict }}</span> ·
+   Score: {{ r.score }} · Generated: {{ r.generated_at }}</p>
+<p>sha256: <code>{{ r.sample.sha256 }}</code><br>
+   sha512: <code>{{ r.sample.sha512 }}</code></p>
+<h2>Findings ({{ r.findings | length }})</h2>
+<table>
+<tr><th>Severity</th><th>Title</th><th>Category</th><th>Location</th><th>Detail / Evidence</th></tr>
+{% for f in r.findings %}
+<tr>
+  <td class="sev-{{ f.severity }}">{{ f.severity }}</td>
+  <td>{{ f.title }}</td>
+  <td>{{ f.category }}</td>
+  <td>{{ f.location or "" }}</td>
+  <td>{{ f.detail }}{% if f.evidence %}<br><code>{{ f.evidence }}</code>{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+</body>
+</html>
