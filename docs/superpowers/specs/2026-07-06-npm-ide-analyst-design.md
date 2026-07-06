@@ -28,6 +28,7 @@ shells out to Docker for all detonation. This is the core safety invariant.
 | Report output | Machine-readable JSON + self-contained offline HTML |
 | Threat-intel enrichment | None (fully offline) |
 | Platform | **Windows-first `collect`**; `analyze` is cross-platform (operates on files) |
+| Detonation runtime | **Linux container** (Docker Desktop, Linux containers) — a Linux Node image where the hardening flags apply. Payloads branching on `process.platform === 'win32'` take their non-Windows path; acceptable for JS supply-chain payloads. Windows-container detonation is explicitly out of scope. |
 
 ## 3. CLI surface
 
@@ -127,6 +128,7 @@ npm_ide_analyst/
   drop an ELF/EXE.
 - Online threat-intel enrichment (VirusTotal/OTX).
 - macOS/Linux **live collection** beyond stubs (`analyze` is already cross-platform).
+- Windows-container detonation (would give Windows-branch behavior but far weaker isolation).
 
 ## 8. Testing strategy
 - **Unit:** each module (manifest parse, IOC scan, AST analysis, config-hijack, timeline merge,
