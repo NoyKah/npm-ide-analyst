@@ -39,5 +39,24 @@
 </tr>
 {% endfor %}
 </table>
+{% if r.behavior %}
+<h2>Dynamic Behavior ({{ r.behavior | length }})</h2>
+<table>
+<tr><th>Kind</th><th>Detail</th><th>Data</th></tr>
+{% for b in r.behavior %}
+<tr><td>{{ b.kind }}</td><td>{{ b.detail }}</td>
+    <td><code>{{ b.data }}</code></td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% if r.timeline %}
+<h2>Timeline ({{ r.timeline | length }})</h2>
+<table>
+<tr><th>Time</th><th>Source</th><th>Event</th></tr>
+{% for t in r.timeline %}
+<tr><td>{{ t.ts }}</td><td>{{ t.source }}</td><td>{{ t.event }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
 </body>
 </html>

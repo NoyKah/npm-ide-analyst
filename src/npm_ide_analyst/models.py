@@ -43,6 +43,22 @@ class Finding:
 
 
 @dataclass
+class BehaviorEvent:
+    kind: str
+    detail: str
+    data: dict = field(default_factory=dict)
+    ts: float | None = None
+    stack: str | None = None
+
+
+@dataclass
+class TimelineEntry:
+    ts: str
+    source: str
+    event: str
+
+
+@dataclass
 class Sample:
     name: str
     version: str | None
@@ -57,6 +73,8 @@ class Report:
     sample: Sample
     findings: list[Finding] = field(default_factory=list)
     generated_at: str = ""
+    behavior: list[BehaviorEvent] = field(default_factory=list)
+    timeline: list[TimelineEntry] = field(default_factory=list)
 
     @property
     def score(self) -> int:
