@@ -5,6 +5,7 @@ from click.testing import CliRunner
 from npm_ide_analyst.cli import cli
 from npm_ide_analyst.report.json_report import load_report, write_json
 from npm_ide_analyst.models import Report, Sample, Finding, Severity, ArtifactType, BehaviorEvent
+from npm_ide_analyst.sandbox.orchestrator import SandboxUnavailable
 
 
 def _report():
@@ -46,3 +47,27 @@ def test_analyze_static_only_when_no_dynamic(tmp_path):
     assert result.exit_code == 0
     data = json.loads((out / "report.json").read_text())
     assert data["behavior"] == []          # no dynamic requested
+
+
+def test_analyze_dynamic_degrades_gracefully_when_detonation_fails(tmp_path, monkeypatch):
+    def _boom(*args, **kwargs):
+        raise SandboxUnavailable("boom")
+
+    monkeypatch.setattr("npm_ide_analyst.cli.docker_available", lambda: True)
+    monkeypatch.setattr("npm_ide_analyst.cli.detonate", _boom)
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps(
+        {"name": "evil", "scripts": {"postinstall": "node ./s.js"}}))
+    (pkg / "s.js").write_text("require('child_process')", encoding="utf-8")
+    out = tmp_path / "out"
+
+    result = CliRunner().invoke(cli, ["analyze", str(pkg), "--out", str(out), "--dynamic"])
+
+    assert result.exit_code == 0, result.output
+    assert "WARNING" in result.output
+    assert "boom" in result.output
+    assert (out / "report.json").exists()
+    data = json.loads((out / "report.json").read_text())
+    assert data["behavior"] == []

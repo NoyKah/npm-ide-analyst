@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,10 +59,16 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
             click.echo("WARNING: --dynamic requested but Docker is unavailable; "
                        "running static-only.", err=True)
         else:
-            build_image()
-            behavior = detonate(payload_root, sample.artifact_type)
-            findings = findings + behavior_to_findings(behavior)
-            timeline = build_timeline(behavior)
+            try:
+                build_image()
+                behavior = detonate(payload_root, sample.artifact_type)
+                findings = findings + behavior_to_findings(behavior)
+                timeline = build_timeline(behavior)
+            except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:
+                click.echo(f"WARNING: detonation failed ({exc}); "
+                           "continuing static-only.", err=True)
+                behavior = []
+                timeline = []
     report = Report(sample=sample, findings=findings, generated_at=_now(),
                     behavior=behavior, timeline=timeline)
     write_json(report, out_dir / "report.json")
@@ -91,3 +98,7 @@ def report_cmd(json_path: Path, out_path: Path) -> None:
     rpt = load_report(json_path)
     write_html(rpt, out_path)
     click.echo(f"rendered {out_path}")
+
+
+if __name__ == "__main__":
+    cli()
