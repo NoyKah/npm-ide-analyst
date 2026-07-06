@@ -11,7 +11,7 @@ def report_to_dict(report: Report) -> dict:
     sample = asdict(report.sample)
     sample["root"] = str(sample["root"])
     sample["artifact_type"] = str(report.sample.artifact_type)
-    return {
+    result = {
         "generated_at": report.generated_at,
         "verdict": report.verdict,
         "score": report.score,
@@ -19,7 +19,10 @@ def report_to_dict(report: Report) -> dict:
         "findings": [
             {**asdict(f), "severity": str(f.severity)} for f in report.findings
         ],
+        "behavior": [asdict(b) for b in report.behavior],
+        "timeline": [asdict(t) for t in report.timeline],
     }
+    return result
 
 
 def write_json(report: Report, out_path: Path) -> None:
