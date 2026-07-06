@@ -276,8 +276,14 @@ def test_hooks_network_captures_url(tmp_path):
 
 
 def test_hooks_eval_logs_decoded_code(tmp_path):
+    import base64
+    # Decoded code must (a) trip the decode hook's malware-keyword filter
+    # (contains "require"/"http") and (b) eval cleanly in global scope
+    # (indirect eval has no local `require`), so use a keyword-bearing comment.
+    code = "1 /* require http */"
+    b64 = base64.b64encode(code.encode()).decode()
     events = _run_driver(tmp_path,
-        "eval(Buffer.from('Y29uc29sZS5sb2coMSk=','base64').toString());")
+        f"eval(Buffer.from('{b64}','base64').toString());")
     assert any(e["kind"] == "decode" for e in events)
     assert any(e["kind"] == "eval" for e in events)
 
