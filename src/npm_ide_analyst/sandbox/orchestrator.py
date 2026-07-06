@@ -4,6 +4,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from ..models import ArtifactType, BehaviorEvent
@@ -60,6 +61,7 @@ def detonate(payload_root: Path, artifact_type: ArtifactType,
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
     out_dir = Path(tempfile.mkdtemp(prefix="analyst-out-"))
+    container_name = f"analyst-det-{uuid.uuid4().hex[:12]}"
     try:
         # KNOWN ISSUE: the harness writes the event log as the in-container
         # non-root user (uid 1000). The host-created out_dir is owned by
@@ -72,6 +74,7 @@ def detonate(payload_root: Path, artifact_type: ArtifactType,
         cmd = [
             "docker", "run",
             *DOCKER_RUN_FLAGS,
+            "--name", container_name,
             "-v", f"{payload_root.resolve()}:/work/sample:ro",
             "-v", f"{out_dir.resolve()}:/work/hostout:rw",
             "-e", "ANALYST_SAMPLE_DIR=/work/sample",
@@ -82,7 +85,11 @@ def detonate(payload_root: Path, artifact_type: ArtifactType,
         try:
             subprocess.run(cmd, capture_output=True, timeout=timeout + 15)
         except subprocess.TimeoutExpired:
-            pass  # container is killed by --rm on timeout; partial log still ingested
+            # Defense in depth: the docker run client process was killed by
+            # our wall-clock timeout, so --rm never got a chance to fire.
+            # Force-reap the named container directly; partial log still ingested.
+            subprocess.run(["docker", "rm", "-f", container_name],
+                           capture_output=True, timeout=30)
         return load_event_log(out_dir / "events.jsonl")
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
