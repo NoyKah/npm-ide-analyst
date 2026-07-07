@@ -26,3 +26,13 @@ def test_dedupes_repeated_behavior():
 
 def test_no_events_no_findings():
     assert behavior_to_findings([]) == []
+
+
+def test_c2_event_maps_to_high_finding():
+    findings = behavior_to_findings([
+        BehaviorEvent(kind="c2", detail="HTTP GET c2.evil.test/a"),
+    ])
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].category == "c2"
+    assert findings[0].location == "[dynamic]"

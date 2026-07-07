@@ -2,6 +2,11 @@
 'use strict';
 const { emit } = require('./emit.js');
 
+// When ANALYST_SINKHOLE is set, the detonation runs on an internet-less internal
+// Docker network with a real sinkhole. Network hooks then LOG and DELEGATE to the
+// real implementation so traffic reaches the sinkhole. Everything else stays neutered.
+const SINKHOLE = !!process.env.ANALYST_SINKHOLE;
+
 // --- child_process: log + neuter ---
 const cp = require('child_process');
 for (const fn of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
@@ -22,7 +27,7 @@ for (const fn of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFil
   };
 }
 
-// --- network: http/https request/get: log + neuter ---
+// --- network: http/https request/get: log + (neuter | delegate) ---
 function hookHttp(mod, scheme) {
   for (const fn of ['request', 'get']) {
     const orig = mod[fn];
@@ -33,6 +38,9 @@ function hookHttp(mod, scheme) {
         url = `${url.protocol || scheme + ':'}//${url.host || url.hostname}${url.path || ''}`;
       }
       emit('network', `${scheme} ${fn}: ${url}`, { scheme, url: String(url) });
+      if (SINKHOLE) {
+        return orig.apply(mod, args); // real request → sinkhole captures the dialog
+      }
       const { EventEmitter } = require('events');
       const req = new EventEmitter();
       req.write = (chunk) => { emit('network', `body: ${chunk}`, { body: String(chunk).slice(0, 2000) }); return true; };
@@ -46,23 +54,30 @@ function hookHttp(mod, scheme) {
 hookHttp(require('http'), 'http');
 hookHttp(require('https'), 'https');
 
-// --- net.Socket.connect: log + neuter ---
+// --- net.Socket.connect: log + (neuter | delegate) ---
 const net = require('net');
 const origConnect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
   const opt = args[0];
   const target = typeof opt === 'object' ? `${opt.host || opt.path}:${opt.port || ''}` : String(opt);
   emit('network', `socket connect: ${target}`, { target });
+  if (SINKHOLE) {
+    return origConnect.apply(this, args); // real connect → sinkhole
+  }
   this.destroy && this.destroy();
   return this; // neutered
 };
 
-// --- dns: log, return sinkhole answers ---
+// --- dns: log; sinkhole -> real resolver (hits sinkhole via --dns), else synthetic ---
 const dns = require('dns');
 for (const fn of ['lookup', 'resolve', 'resolve4', 'resolve6']) {
   if (typeof dns[fn] !== 'function') continue;
+  const orig = dns[fn];
   dns[fn] = function (host, ...rest) {
     emit('dns', `${fn}: ${host}`, { host });
+    if (SINKHOLE) {
+      return orig.apply(dns, [host, ...rest]); // real resolve → sinkhole DNS
+    }
     const cb = rest.find((a) => typeof a === 'function');
     if (cb) process.nextTick(() => cb(null, fn === 'lookup' ? '127.0.0.1' : ['127.0.0.1']));
   };

@@ -93,3 +93,36 @@ def test_analyze_dynamic_probes_docker_only_once(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert calls["n"] == 1
+
+
+def test_analyze_sinkhole_degrades_without_docker(tmp_path, monkeypatch):
+    import npm_ide_analyst.cli as climod
+    monkeypatch.setattr(climod, "docker_available", lambda: False)
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps({"name": "evil"}))
+    out = tmp_path / "out"
+    result = CliRunner().invoke(cli, ["analyze", str(pkg), "--out", str(out), "--sinkhole"])
+    assert result.exit_code == 0, result.output
+    data = json.loads((out / "report.json").read_text())
+    assert data["behavior"] == []          # degraded to static-only
+
+
+def test_analyze_sinkhole_passes_flag_to_detonate(tmp_path, monkeypatch):
+    import npm_ide_analyst.cli as climod
+    calls = {}
+    monkeypatch.setattr(climod, "docker_available", lambda: True)
+    monkeypatch.setattr(climod, "build_image", lambda *a, **k: None)
+
+    def fake_detonate(root, artifact_type, assume_docker=False, sinkhole=False):
+        calls["sinkhole"] = sinkhole
+        return []
+
+    monkeypatch.setattr(climod, "detonate", fake_detonate)
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps({"name": "evil"}))
+    out = tmp_path / "out"
+    result = CliRunner().invoke(cli, ["analyze", str(pkg), "--out", str(out), "--sinkhole"])
+    assert result.exit_code == 0, result.output
+    assert calls["sinkhole"] is True       # --sinkhole implied detonation + passed flag

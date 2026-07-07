@@ -16,9 +16,7 @@ from .models import Report, Sample
 from .report.html_report import write_html
 from .report.json_report import load_report, write_json
 from .sandbox.findings import behavior_to_findings
-from .sandbox.orchestrator import (
-    SandboxUnavailable, build_image, detonate, docker_available,
-)
+from .sandbox.orchestrator import build_image, detonate, docker_available
 from .static.engine import run_static
 
 
@@ -36,7 +34,11 @@ def cli() -> None:
 @click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path))
 @click.option("--dynamic/--no-dynamic", default=False,
               help="Detonate the sample in a hardened Docker sandbox.")
-def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
+@click.option("--sinkhole/--no-sinkhole", default=False,
+              help="Detonate against a real DNS+HTTP(S) sinkhole on an internal, "
+                   "internet-less network to capture live C2 dialog for "
+                   "hostname-based traffic. Implies --dynamic.")
+def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "_work"
@@ -54,20 +56,27 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
     findings = run_static(payload_root)
     behavior = []
     timeline = []
-    if dynamic:
+    if dynamic or sinkhole:
         if not docker_available():
-            click.echo("WARNING: --dynamic requested but Docker is unavailable; "
-                       "running static-only.", err=True)
+            click.echo("WARNING: dynamic/sinkhole requested but Docker is "
+                       "unavailable; running static-only.", err=True)
         else:
             # Docker was just verified above; tell the sandbox helpers to trust
             # that rather than each re-running the ~15s `docker info` probe.
             try:
                 build_image(assume_docker=True)
                 behavior = detonate(payload_root, sample.artifact_type,
-                                    assume_docker=True)
+                                    assume_docker=True, sinkhole=sinkhole)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
-            except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:
+                if sinkhole:
+                    click.echo("NOTE: the sinkhole captures hostname-based C2; "
+                               "hard-coded public IPs are not routed on the "
+                               "internal network.", err=True)
+            except Exception as exc:
+                # Detonation is best-effort: any failure (Docker error, harness
+                # crash, sinkhole provisioning failure) degrades to a static-only
+                # report rather than aborting triage. Intentionally broad.
                 click.echo(f"WARNING: detonation failed ({exc}); "
                            "continuing static-only.", err=True)
                 behavior = []

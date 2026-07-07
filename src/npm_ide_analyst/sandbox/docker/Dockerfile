@@ -4,9 +4,21 @@ FROM node:22-bookworm-slim
 # Non-root user for detonation
 RUN useradd -m -u 1000 analyst || true
 
+# Build-time only: openssl to mint the sinkhole's self-signed TLS cert.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl \
+ && rm -rf /var/lib/apt/lists/*
+
 # Harness lives in the image (read-only rootfs at runtime)
 WORKDIR /harness
 COPY harness/ /harness/
+
+# Self-signed cert for the sinkhole HTTPS responder. The detonation side runs with
+# NODE_TLS_REJECT_UNAUTHORIZED=0 on an --internal (internet-less) network, so the
+# CN/chain are irrelevant and this cert can never enable a real MITM.
+RUN openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=*" \
+      -keyout /harness/sink-key.pem -out /harness/sink-cert.pem \
+ && chmod 0644 /harness/sink-key.pem /harness/sink-cert.pem
 
 # Canary/decoy secrets so theft is observable and traceable.
 # Use printf (not echo) so \n is honored under dash (/bin/sh on bookworm-slim)
@@ -26,5 +38,6 @@ RUN mkdir -p /home/analyst/.ssh /home/analyst/.aws \
 
 USER 1000:1000
 ENV ANALYST_EVENT_LOG=/work/out/events.jsonl
-# Entry is chosen at run time via command args (run-npm.js or run-vsix.js)
+# Entry is chosen at run time via command args (run-npm.js, run-vsix.js, or an
+# --entrypoint override to node sinkhole.js).
 ENTRYPOINT ["node", "-r", "/harness/preload.js"]

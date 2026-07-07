@@ -6,6 +6,7 @@ from ..models import BehaviorEvent, Finding, Severity
 _MAP = {
     "process": ("process-exec", Severity.HIGH, "Runtime process execution"),
     "network": ("network", Severity.HIGH, "Runtime outbound network"),
+    "c2": ("c2", Severity.HIGH, "C2 server dialog"),
     "secret": ("secret-access", Severity.HIGH, "Runtime secret/credential access"),
     "eval": ("dynamic-code", Severity.HIGH, "Runtime dynamic code execution"),
     "decode": ("obfuscation", Severity.MEDIUM, "Runtime payload decoding"),
