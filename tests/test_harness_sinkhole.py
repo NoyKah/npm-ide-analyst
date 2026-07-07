@@ -4,6 +4,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -114,7 +115,9 @@ def test_sinkhole_stays_ready_when_a_listener_port_is_taken(tmp_path):
     sink = (HARNESS / "sinkhole.js").resolve()
 
     blocker = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-    blocker.bind(("127.0.0.1", 8082))
+    if hasattr(_socket, "SO_EXCLUSIVEADDRUSE"):
+        blocker.setsockopt(_socket.SOL_SOCKET, _socket.SO_EXCLUSIVEADDRUSE, 1)
+    blocker.bind(("0.0.0.0", 8082))
     blocker.listen(1)
     try:
         env = {**os.environ,
@@ -128,7 +131,17 @@ def test_sinkhole_stays_ready_when_a_listener_port_is_taken(tmp_path):
                                     stderr=subprocess.STDOUT)
         try:
             assert _wait_ready(stdout_path), "sinkhole did not signal ready after a port conflict"
+            captured = stdout_path.read_text()
+            # Smoke assertions (every platform): it starts, signals ready, no crash.
+            assert "SINKHOLE READY" in captured, "readiness did not fire after the HTTP bind failure"
             assert proc.poll() is None, "sinkhole process crashed on a port conflict"
+            if sys.platform != "win32":
+                # On Linux (the sinkhole's actual runtime), the wildcard blocker forces
+                # EADDRINUSE, so the HTTP listener must hit the drop path and still reach
+                # readiness. Windows permits dual wildcard binds (verified via netstat:
+                # two PIDs LISTENING on 0.0.0.0:8082), so no conflict occurs there and the
+                # drop path can't be exercised — the smoke assertions above still apply.
+                assert "http disabled" in captured, "HTTP listener did not hit the error/drop path"
         finally:
             proc.terminate()
             try:
