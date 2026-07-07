@@ -5,10 +5,12 @@ const fs = require('fs');
 const { emit } = require('./emit.js');
 const { resolveWithin } = require('./resolve-within.js');
 const { makeContext } = require('./vscode-mock.js');
+const { installEvalScope } = require('./eval-scope.js');
 
 async function main() {
   const dir = process.env.ANALYST_SAMPLE_DIR || '/work/sample';
   emit('detonation', 'vsix detonation start', { dir });
+  installEvalScope(dir);
   let manifest = {};
   try { manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
   catch (e) { emit('detonation', 'no package.json', {}); }
