@@ -116,18 +116,35 @@ function Install-Node {
     Refresh-Path
 }
 
-function Install-Docker {
-    if (Have docker) { Write-Host "found $(docker --version)"; return }
-    Log "installing Docker Desktop"
-    if ($script:Winget) { WingetInstall 'Docker.DockerDesktop' }
-    else {
-        $exe = Join-Path $env:TEMP 'DockerDesktopInstaller.exe'
-        Download 'https://desktop.docker.com/win/main/amd64/Docker Desktop Installer.exe' $exe
-        Start-Process $exe -ArgumentList 'install', '--quiet', '--accept-license' -Wait
-        Remove-Item $exe -ErrorAction SilentlyContinue
+function Ensure-Wsl {
+    # Docker Desktop's Linux-container backend needs an up-to-date WSL2 kernel;
+    # a stale kernel triggers Docker's "WSL needs updating" dialog. Update it here.
+    if (Have wsl) {
+        Log "updating the WSL kernel (wsl --update)"
+        try { wsl --update | Out-Host } catch { Warn "wsl --update failed: $($_.Exception.Message)" }
+    } else {
+        Warn "WSL not found. Run 'wsl --install --no-distribution' (elevated), reboot, then re-run this script."
     }
-    Refresh-Path
-    Warn "Docker Desktop needs WSL2 and usually a REBOOT."
+}
+
+function Install-Docker {
+    if (Have docker) {
+        Write-Host "found $(docker --version)"
+    } else {
+        Log "installing Docker Desktop"
+        if ($script:Winget) { WingetInstall 'Docker.DockerDesktop' }
+        else {
+            $exe = Join-Path $env:TEMP 'DockerDesktopInstaller.exe'
+            Download 'https://desktop.docker.com/win/main/amd64/Docker Desktop Installer.exe' $exe
+            Start-Process $exe -ArgumentList 'install', '--quiet', '--accept-license' -Wait
+            Remove-Item $exe -ErrorAction SilentlyContinue
+        }
+        Refresh-Path
+        Warn "Docker Desktop needs WSL2 and usually a REBOOT."
+    }
+    # Runs whether Docker was just installed or already present, so a re-run
+    # heals a machine whose WSL kernel is too old for Docker's Linux backend.
+    Ensure-Wsl
 }
 
 # ---- install runtimes ----
