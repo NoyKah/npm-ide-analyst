@@ -36,8 +36,17 @@ def cli() -> None:
 @click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path))
 @click.option("--dynamic/--no-dynamic", default=False,
               help="Detonate the sample in a hardened Docker sandbox.")
-def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
+@click.option("--trace-native/--no-trace-native", default=False,
+              help="Under --dynamic: run dropped/native binaries under strace "
+                   "(adds CAP_SYS_PTRACE, weakening isolation; executes native "
+                   "payload code). Opt-in, default off.")
+def analyze(input_path: Path, out_dir: Path, dynamic: bool,
+            trace_native: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
+    if trace_native and not dynamic:
+        raise click.UsageError(
+            "--trace-native requires --dynamic (it deepens detonation, "
+            "which only runs under --dynamic).")
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "_work"
     payload_root = unpack(input_path, work)
@@ -60,8 +69,15 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
                        "running static-only.", err=True)
         else:
             try:
+                if trace_native:
+                    click.echo(
+                        "WARNING: --trace-native adds CAP_SYS_PTRACE (weakening "
+                        "container isolation) and EXECUTES native payload code "
+                        "under strace. Network stays disabled; all other limits "
+                        "hold. Proceeding.", err=True)
                 build_image()
-                behavior = detonate(payload_root, sample.artifact_type)
+                behavior = detonate(payload_root, sample.artifact_type,
+                                    trace_native=trace_native)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
             except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:

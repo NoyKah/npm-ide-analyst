@@ -71,3 +71,15 @@ def test_analyze_dynamic_degrades_gracefully_when_detonation_fails(tmp_path, mon
     assert (out / "report.json").exists()
     data = json.loads((out / "report.json").read_text())
     assert data["behavior"] == []
+
+
+def test_trace_native_requires_dynamic(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps({"name": "e"}))
+    out = tmp_path / "out"
+    result = CliRunner().invoke(
+        cli, ["analyze", str(pkg), "--out", str(out), "--trace-native"])
+    assert result.exit_code != 0
+    assert "trace-native" in result.output.lower()
+    assert "dynamic" in result.output.lower()
