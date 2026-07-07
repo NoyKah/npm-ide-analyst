@@ -91,6 +91,21 @@ def docker_available() -> bool:
         return False
 
 
+def image_exists() -> bool:
+    """True if the sandbox image is already built locally.
+
+    Lets callers skip the per-run `docker build` (which reaches the registry to
+    load base-image metadata even when cached) so detonation needs no network
+    after the first build.
+    """
+    try:
+        r = subprocess.run(["docker", "image", "inspect", IMAGE_TAG],
+                           capture_output=True, timeout=15)
+        return r.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
 def build_image(*, assume_docker: bool = False) -> None:
     # `assume_docker` lets a caller that already ran docker_available() skip the
     # redundant ~15s `docker info` probe; standalone callers still verify.
