@@ -70,11 +70,34 @@ log "Docker Engine"
 if have docker; then
   echo "found $(docker --version)"
 else
-  echo "installing via the official get.docker.com convenience script"
-  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-  $SUDO sh /tmp/get-docker.sh
+  # get.docker.com installs official docker-ce on mainstream distros, but it has
+  # NO repo for rolling derivatives like Kali/Parrot (their codename isn't served)
+  # and a failed run leaves a broken /etc/apt/sources.list.d/docker.list behind.
+  # Detect those, skip the script, and use the distro's own docker package.
+  ID=""; ID_LIKE=""
+  [ -r /etc/os-release ] && . /etc/os-release
+  use_getdocker=1
+  case "${ID}:${ID_LIKE}" in
+    *kali*|*parrot*) use_getdocker=0 ;;
+  esac
+
+  if [ "$use_getdocker" -eq 1 ] && \
+     curl -fsSL https://get.docker.com -o /tmp/get-docker.sh && \
+     $SUDO sh /tmp/get-docker.sh; then
+    :   # official docker-ce installed
+  else
+    warn "get.docker.com unavailable for this distro; installing the distro docker package"
+    if [ "$PM" = "apt" ]; then
+      $SUDO rm -f /etc/apt/sources.list.d/docker.list   # clean up a failed run
+    fi
+    case "$PM" in
+      apt)                    pminstall docker.io ;;
+      dnf|yum|pacman|zypper)  pminstall docker ;;
+    esac
+  fi
   rm -f /tmp/get-docker.sh
-  $SUDO usermod -aG docker "$USER" 2>/dev/null || true
+
+  $SUDO usermod -aG docker "${SUDO_USER:-$USER}" 2>/dev/null || true
   $SUDO systemctl enable --now docker 2>/dev/null || warn "could not enable docker via systemd (WSL/container?)"
 fi
 
