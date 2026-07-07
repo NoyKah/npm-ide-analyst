@@ -26,3 +26,15 @@ def test_dedupes_repeated_behavior():
 
 def test_no_events_no_findings():
     assert behavior_to_findings([]) == []
+
+
+def test_maps_native_and_syscall():
+    events = [
+        BehaviorEvent(kind="native", detail="strace ./dropped -> exit 0"),
+        BehaviorEvent(kind="syscall", detail="connect: 1.2.3.4:443"),
+    ]
+    findings = behavior_to_findings(events)
+    cats = {f.category: f.severity for f in findings}
+    assert cats["native-exec"] == Severity.HIGH
+    assert cats["native-syscall"] == Severity.MEDIUM
+    assert all(f.location == "[dynamic]" for f in findings)
