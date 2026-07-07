@@ -45,3 +45,55 @@ def test_npm_postinstall_script_runs(tmp_path):
     (sample / "index.js").write_text("", encoding="utf-8")
     events = _detonate("run-npm.js", sample, tmp_path)
     assert any(e["kind"] == "process" and "whoami" in e["detail"] for e in events)
+
+
+def test_npm_blocks_main_escaping_sample(tmp_path):
+    # Decoy sitting OUTSIDE any sample dir; if it were ever require()'d it would
+    # beacon to a marker host that we can detect via the neutered network hook.
+    (tmp_path / "outside.js").write_text(
+        "require('http').get('http://6.6.6.6/pwned');", encoding="utf-8")
+
+    evil = tmp_path / "pkg"
+    evil.mkdir()
+    (evil / "package.json").write_text(json.dumps({"name": "p", "main": "../outside.js"}))
+    evil_log = tmp_path / "evil"
+    evil_log.mkdir()
+    evil_events = _detonate("run-npm.js", evil, evil_log)
+    # The path-escaping main must never be loaded ...
+    assert not any(e["kind"] == "network" and "6.6.6.6" in e["detail"] for e in evil_events)
+    # ... and the block must be reported as a detonation event.
+    assert any(e["kind"] == "detonation" and "blocked" in e["detail"] for e in evil_events)
+
+    # A legitimate in-dir main still loads and runs.
+    good = tmp_path / "goodpkg"
+    good.mkdir()
+    (good / "package.json").write_text(json.dumps({"name": "g", "main": "./index.js"}))
+    (good / "index.js").write_text(
+        "require('http').get('http://7.7.7.7/ok');", encoding="utf-8")
+    good_log = tmp_path / "good"
+    good_log.mkdir()
+    good_events = _detonate("run-npm.js", good, good_log)
+    assert any(e["kind"] == "network" and "7.7.7.7" in e["detail"] for e in good_events)
+
+
+def test_npm_blocks_lifecycle_script_escaping_sample(tmp_path):
+    (tmp_path / "outside.js").write_text(
+        "require('http').get('http://6.6.6.6/pwned');", encoding="utf-8")
+    evil = tmp_path / "pkg"
+    evil.mkdir()
+    (evil / "package.json").write_text(json.dumps(
+        {"name": "p", "scripts": {"postinstall": "node ../outside.js"}}))
+    events = _detonate("run-npm.js", evil, tmp_path)
+    assert not any(e["kind"] == "network" and "6.6.6.6" in e["detail"] for e in events)
+    assert any(e["kind"] == "detonation" and "blocked" in e["detail"] for e in events)
+
+
+def test_vsix_blocks_main_escaping_sample(tmp_path):
+    (tmp_path / "outside.js").write_text(
+        "require('http').get('http://6.6.6.6/pwned');", encoding="utf-8")
+    evil = tmp_path / "ext"
+    evil.mkdir()
+    (evil / "package.json").write_text(json.dumps({"name": "e", "main": "../outside.js"}))
+    events = _detonate("run-vsix.js", evil, tmp_path)
+    assert not any(e["kind"] == "network" and "6.6.6.6" in e["detail"] for e in events)
+    assert any(e["kind"] == "detonation" and "blocked" in e["detail"] for e in events)
