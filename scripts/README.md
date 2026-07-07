@@ -44,9 +44,12 @@ elevated shell, reboot, then re-run the setup script.
 ./scripts/setup.sh
 ```
 
-Docker is installed via Docker's official `get.docker.com` script and your user
-is added to the `docker` group. **Log out and back in** (or `newgrp docker`)
-before using `--dynamic`, so Docker works without `sudo`.
+Docker is installed via Docker's official `get.docker.com` script on mainstream
+distros; on **Kali/Parrot** (rolling derivatives `get.docker.com` can't serve)
+the script installs the distro's `docker.io` package instead. Your user is added
+to the `docker` group — **log out and back in** (or `newgrp docker`) before using
+`--dynamic`, so Docker works without `sudo`. (As root, e.g. on Kali, that step
+isn't needed.)
 
 ## What you get
 
