@@ -21,6 +21,12 @@ Set-ExecutionPolicy -Scope Process Bypass -Force   # if scripts are blocked
 .\scripts\setup.ps1
 ```
 
+The script prefers **winget**, but doesn't require it: if winget is missing — or
+just hidden from your elevated shell (App Installer is per-user, so an admin
+session often can't see it) — it locates winget under `Program Files\WindowsApps`,
+tries to bootstrap it, and otherwise falls back to each vendor's **official
+silent installer**. So the old "winget not found" dead end no longer happens.
+
 Docker Desktop needs **WSL2 and usually a reboot** on first install. If the
 script reports Docker isn't ready, reboot, start Docker Desktop (wait for the
 whale icon to settle, Linux containers), and **re-run the script** — it will
