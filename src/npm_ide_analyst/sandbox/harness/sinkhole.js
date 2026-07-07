@@ -84,9 +84,24 @@ function httpHandler(scheme) {
 
 let pending = 0;
 let done = 0;
+let announced = false;
+function announceIfReady() {
+  if (!announced && done >= pending) {
+    announced = true;
+    process.stdout.write('SINKHOLE READY\n');
+  }
+}
 function ready() {
   done += 1;
-  if (done >= pending) process.stdout.write('SINKHOLE READY\n');
+  announceIfReady();
+}
+function drop(what, e) {
+  // A listener failed to bind (async 'error' or sync throw). Stop waiting on it,
+  // and if the remaining listeners are already up, still signal readiness instead
+  // of crashing (unhandled 'error') or hanging forever.
+  process.stderr.write(`${what} disabled: ${(e && e.message) || e}\n`);
+  pending -= 1;
+  announceIfReady();
 }
 
 // DNS listener
@@ -98,21 +113,24 @@ udp.on('message', (msg, rinfo) => {
     udp.send(dnsResponse(msg), rinfo.port, rinfo.address);
   } catch (_) { /* never throw out of the responder */ }
 });
-udp.on('error', (e) => process.stderr.write(`dns error: ${e.message}\n`));
+udp.on('error', (e) => drop('dns', e));
 udp.bind(DNS_PORT, () => ready());
 
 // HTTP listener
 pending += 1;
-http.createServer(httpHandler('http')).listen(HTTP_PORT, () => ready());
+const httpSrv = http.createServer(httpHandler('http'));
+httpSrv.on('error', (e) => drop('http', e));
+httpSrv.listen(HTTP_PORT, () => ready());
 
 // HTTPS listener (only if the baked cert is present)
 if (fs.existsSync(CERT) && fs.existsSync(KEY)) {
   pending += 1;
   try {
     const opts = { cert: fs.readFileSync(CERT), key: fs.readFileSync(KEY) };
-    https.createServer(opts, httpHandler('https')).listen(HTTPS_PORT, () => ready());
+    const httpsSrv = https.createServer(opts, httpHandler('https'));
+    httpsSrv.on('error', (e) => drop('https', e));
+    httpsSrv.listen(HTTPS_PORT, () => ready());
   } catch (e) {
-    process.stderr.write(`https disabled: ${e.message}\n`);
-    pending -= 1; // do not wait on a listener we failed to start
+    drop('https', e);
   }
 }
