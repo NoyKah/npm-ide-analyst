@@ -14,9 +14,8 @@ IMAGE_TAG = "npm-ide-analyst-sandbox:latest"
 _DOCKER_DIR = Path(__file__).parent / "docker"
 _HARNESS_DIR = Path(__file__).parent / "harness"
 
-DOCKER_RUN_FLAGS = [
+_ISOLATION_FLAGS = [
     "--rm",
-    "--network", "none",
     "--user", "1000:1000",
     "--cap-drop", "ALL",
     "--security-opt", "no-new-privileges",
@@ -27,6 +26,29 @@ DOCKER_RUN_FLAGS = [
     "--cpus", "1",
     "--pids-limit", "128",
 ]
+
+# Back-compat alias: the default (no-sinkhole) flag vector.
+DOCKER_RUN_FLAGS = _ISOLATION_FLAGS + ["--network", "none"]
+
+
+def _detonation_flags(network: str | None = None,
+                      dns_ip: str | None = None) -> list[str]:
+    """Full ``docker run`` flag vector for the detonation container.
+
+    Default mode isolates the container with ``--network none``. Sinkhole mode
+    attaches it to an internal network with the sinkhole as DNS resolver and sets
+    the two env vars the harness needs; EVERY other isolation flag is identical.
+    """
+    flags = list(_ISOLATION_FLAGS)
+    if network:
+        flags += ["--network", network]
+        if dns_ip:
+            flags += ["--dns", dns_ip]
+        flags += ["-e", "ANALYST_SINKHOLE=1",
+                  "-e", "NODE_TLS_REJECT_UNAUTHORIZED=0"]
+    else:
+        flags += ["--network", "none"]
+    return flags
 
 
 class SandboxUnavailable(RuntimeError):
