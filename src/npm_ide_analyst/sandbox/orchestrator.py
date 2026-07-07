@@ -28,6 +28,21 @@ DOCKER_RUN_FLAGS = [
     "--pids-limit", "128",
 ]
 
+PTRACE_CAP_FLAGS = ["--cap-add", "SYS_PTRACE"]
+
+
+def run_flags(trace_native: bool = False) -> list[str]:
+    """Return the hardened docker run flag vector.
+
+    Only when trace_native is True is a single capability re-added
+    (SYS_PTRACE, required for strace/ptrace under Docker's default seccomp).
+    Every other isolation flag is unchanged. Returns a fresh list.
+    """
+    flags = list(DOCKER_RUN_FLAGS)
+    if trace_native:
+        flags += PTRACE_CAP_FLAGS
+    return flags
+
 
 class SandboxUnavailable(RuntimeError):
     pass
