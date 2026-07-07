@@ -19,6 +19,10 @@ RUN apt-get update \
 # Harness lives in the image (read-only rootfs at runtime)
 WORKDIR /harness
 COPY harness/ /harness/
+# COPY preserves the build host's file modes; a restrictive umask (e.g. building
+# as root on Kali) can leave these non-world-readable, so the non-root detonation
+# user (uid 1000) hits EACCES loading preload.js. Force readable + dir-traversable.
+RUN chmod -R a+rX /harness
 
 # Self-signed cert for the sinkhole HTTPS responder. The detonation side runs with
 # NODE_TLS_REJECT_UNAUTHORIZED=0 on an --internal (internet-less) network, so the
