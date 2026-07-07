@@ -36,7 +36,11 @@ def cli() -> None:
 @click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path))
 @click.option("--dynamic/--no-dynamic", default=False,
               help="Detonate the sample in a hardened Docker sandbox.")
-def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
+@click.option("--sinkhole/--no-sinkhole", default=False,
+              help="Detonate against a real DNS+HTTP(S) sinkhole on an internal, "
+                   "internet-less network to capture live C2 dialog for "
+                   "hostname-based traffic. Implies --dynamic.")
+def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "_work"
@@ -54,16 +58,21 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
     findings = run_static(payload_root)
     behavior = []
     timeline = []
-    if dynamic:
+    if dynamic or sinkhole:
         if not docker_available():
-            click.echo("WARNING: --dynamic requested but Docker is unavailable; "
-                       "running static-only.", err=True)
+            click.echo("WARNING: dynamic/sinkhole requested but Docker is "
+                       "unavailable; running static-only.", err=True)
         else:
             try:
                 build_image()
-                behavior = detonate(payload_root, sample.artifact_type)
+                behavior = detonate(payload_root, sample.artifact_type,
+                                    sinkhole=sinkhole)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
+                if sinkhole:
+                    click.echo("NOTE: the sinkhole captures hostname-based C2; "
+                               "hard-coded public IPs are not routed on the "
+                               "internal network.", err=True)
             except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:
                 click.echo(f"WARNING: detonation failed ({exc}); "
                            "continuing static-only.", err=True)
