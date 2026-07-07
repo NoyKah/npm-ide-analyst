@@ -18,7 +18,9 @@ from .models import Report, Sample
 from .report.html_report import write_html
 from .report.json_report import load_report, write_json
 from .sandbox.findings import behavior_to_findings
-from .sandbox.orchestrator import build_image, detonate, docker_available
+from .sandbox.orchestrator import (
+    build_image, detonate, docker_available, image_exists,
+)
 from .static.engine import run_static
 from .static.ioc_scan import iter_js_files
 
@@ -27,6 +29,12 @@ _DYNAMIC_LOC = "[dynamic]"
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _progress(quiet: bool, msg: str) -> None:
+    """Emit a stage progress line to stderr (stdout stays the machine result)."""
+    if not quiet:
+        click.echo(f"[*] {msg}", err=True)
 
 
 @click.group()
@@ -47,11 +55,19 @@ def cli() -> None:
               help="Under --dynamic/--sinkhole: run dropped/native binaries under "
                    "strace (adds CAP_SYS_PTRACE, weakening isolation; executes "
                    "native payload code). Opt-in, default off.")
+@click.option("--timeout", default=30, show_default=True, type=int,
+              help="Detonation wall-clock timeout in seconds (per sample).")
+@click.option("--rebuild-image", is_flag=True, default=False,
+              help="Force a rebuild of the sandbox image (otherwise it is reused "
+                   "if already built, so detonation needs no network).")
+@click.option("--quiet", "-q", is_flag=True, default=False,
+              help="Suppress progress output.")
 @click.option("--debug", is_flag=True, default=False,
               help="Write debug.json (stage timings, raw harness event log, "
                    "container diagnostics, static + env info) for troubleshooting.")
 def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
-            trace_native: bool, debug: bool) -> None:
+            trace_native: bool, timeout: int, rebuild_image: bool, quiet: bool,
+            debug: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
     if trace_native and not (dynamic or sinkhole):
         raise click.UsageError(
@@ -60,6 +76,7 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
     out_dir.mkdir(parents=True, exist_ok=True)
     dbg = DebugCollector() if debug else None
 
+    _progress(quiet, f"acquiring {input_path.name} ...")
     with stage(dbg, "acquire"):
         work = out_dir / "_work"
         payload_root = unpack(input_path, work)
@@ -74,8 +91,12 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
         root=payload_root, sha256=sha256, sha512=sha512,
     )
 
+    js_count = sum(1 for _ in iter_js_files(payload_root))
+    _progress(quiet, f"static analysis of {sample.artifact_type} '{sample.name}' "
+                     f"({js_count} JS files) ...")
     with stage(dbg, "static"):
         findings = run_static(payload_root)
+    _progress(quiet, f"static analysis done: {len(findings)} findings")
     behavior = []
     timeline = []
     if dynamic or sinkhole:
@@ -103,10 +124,19 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
                         "Proceeding.", err=True)
                 dyn_debug = dbg.data["dynamic"] if dbg is not None else None
                 with stage(dbg, "detonation"):
-                    build_image(assume_docker=True)
+                    if rebuild_image or not image_exists():
+                        _progress(quiet, "building sandbox image (first run; needs "
+                                         "network to pull the base image) ...")
+                        build_image(assume_docker=True)
+                    else:
+                        _progress(quiet, "using cached sandbox image")
+                    _progress(quiet, f"detonating in isolated sandbox "
+                                     f"(timeout {timeout}s) ...")
                     behavior = detonate(payload_root, sample.artifact_type,
-                                        assume_docker=True, sinkhole=sinkhole,
-                                        trace_native=trace_native, debug=dyn_debug)
+                                        timeout=timeout, assume_docker=True,
+                                        sinkhole=sinkhole, trace_native=trace_native,
+                                        debug=dyn_debug)
+                _progress(quiet, f"detonation captured {len(behavior)} behavior events")
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
                 if sinkhole:
@@ -119,11 +149,18 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
                 # report rather than aborting triage. Intentionally broad.
                 if dbg is not None:
                     dbg.error("detonation", exc)
-                click.echo(f"WARNING: detonation failed ({exc}); "
+                # Surface the underlying command stderr (e.g. a docker build DNS
+                # failure) instead of only the opaque "exit status 1".
+                stderr = getattr(exc, "stderr", None)
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode("utf-8", "replace")
+                detail = f": {stderr.strip()[:600]}" if stderr else ""
+                click.echo(f"WARNING: detonation failed ({exc}){detail}; "
                            "continuing static-only.", err=True)
                 behavior = []
                 timeline = []
 
+    _progress(quiet, "writing report ...")
     with stage(dbg, "report"):
         report = Report(sample=sample, findings=findings, generated_at=_now(),
                         behavior=behavior, timeline=timeline)
