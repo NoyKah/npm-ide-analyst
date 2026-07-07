@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,12 +13,16 @@ from .acquire.collect_windows import collect as collect_artifacts
 from .acquire.hashing import hash_file
 from .acquire.unpack import detect_artifact_type, unpack
 from .correlate.timeline import build_timeline
+from .debug import DebugCollector, stage
 from .models import Report, Sample
 from .report.html_report import write_html
 from .report.json_report import load_report, write_json
 from .sandbox.findings import behavior_to_findings
 from .sandbox.orchestrator import build_image, detonate, docker_available
 from .static.engine import run_static
+from .static.ioc_scan import iter_js_files
+
+_DYNAMIC_LOC = "[dynamic]"
 
 
 def _now() -> str:
@@ -42,27 +47,35 @@ def cli() -> None:
               help="Under --dynamic/--sinkhole: run dropped/native binaries under "
                    "strace (adds CAP_SYS_PTRACE, weakening isolation; executes "
                    "native payload code). Opt-in, default off.")
+@click.option("--debug", is_flag=True, default=False,
+              help="Write debug.json (stage timings, raw harness event log, "
+                   "container diagnostics, static + env info) for troubleshooting.")
 def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
-            trace_native: bool) -> None:
+            trace_native: bool, debug: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
     if trace_native and not (dynamic or sinkhole):
         raise click.UsageError(
             "--trace-native requires --dynamic or --sinkhole (it deepens "
             "detonation, which only runs with one of those).")
     out_dir.mkdir(parents=True, exist_ok=True)
-    work = out_dir / "_work"
-    payload_root = unpack(input_path, work)
-    manifest = json.loads(
-        (payload_root / "package.json").read_text(encoding="utf-8", errors="replace")
-    ) if (payload_root / "package.json").exists() else {}
-    sha256, sha512 = hash_file(input_path) if input_path.is_file() else ("", "")
+    dbg = DebugCollector() if debug else None
+
+    with stage(dbg, "acquire"):
+        work = out_dir / "_work"
+        payload_root = unpack(input_path, work)
+        manifest = json.loads(
+            (payload_root / "package.json").read_text(encoding="utf-8", errors="replace")
+        ) if (payload_root / "package.json").exists() else {}
+        sha256, sha512 = hash_file(input_path) if input_path.is_file() else ("", "")
     sample = Sample(
         name=manifest.get("name", input_path.stem),
         version=manifest.get("version"),
         artifact_type=detect_artifact_type(payload_root),
         root=payload_root, sha256=sha256, sha512=sha512,
     )
-    findings = run_static(payload_root)
+
+    with stage(dbg, "static"):
+        findings = run_static(payload_root)
     behavior = []
     timeline = []
     if dynamic or sinkhole:
@@ -79,10 +92,12 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
                         "container isolation) and EXECUTES native payload code "
                         "under strace. All other container limits hold. "
                         "Proceeding.", err=True)
-                build_image(assume_docker=True)
-                behavior = detonate(payload_root, sample.artifact_type,
-                                    assume_docker=True, sinkhole=sinkhole,
-                                    trace_native=trace_native)
+                dyn_debug = dbg.data["dynamic"] if dbg is not None else None
+                with stage(dbg, "detonation"):
+                    build_image(assume_docker=True)
+                    behavior = detonate(payload_root, sample.artifact_type,
+                                        assume_docker=True, sinkhole=sinkhole,
+                                        trace_native=trace_native, debug=dyn_debug)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
                 if sinkhole:
@@ -93,16 +108,47 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
                 # Detonation is best-effort: any failure (Docker error, harness
                 # crash, sinkhole provisioning failure) degrades to a static-only
                 # report rather than aborting triage. Intentionally broad.
+                if dbg is not None:
+                    dbg.error("detonation", exc)
                 click.echo(f"WARNING: detonation failed ({exc}); "
                            "continuing static-only.", err=True)
                 behavior = []
                 timeline = []
-    report = Report(sample=sample, findings=findings, generated_at=_now(),
-                    behavior=behavior, timeline=timeline)
-    write_json(report, out_dir / "report.json")
-    write_html(report, out_dir / "report.html")
+
+    with stage(dbg, "report"):
+        report = Report(sample=sample, findings=findings, generated_at=_now(),
+                        behavior=behavior, timeline=timeline)
+        write_json(report, out_dir / "report.json")
+        write_html(report, out_dir / "report.html")
+
+    if dbg is not None:
+        _fill_debug(dbg, sample, payload_root, findings, behavior, report)
+        dbg.write(out_dir / "debug.json")
     click.echo(f"verdict={report.verdict} score={report.score} "
                f"findings={len(findings)} -> {out_dir}")
+
+
+def _fill_debug(dbg: DebugCollector, sample, payload_root: Path,
+                findings, behavior, report) -> None:
+    """Populate the sample / static / dynamic summary sections of the bundle."""
+    dbg.data["sample"] = {
+        "name": sample.name, "version": sample.version,
+        "artifact_type": str(sample.artifact_type), "sha256": sample.sha256,
+    }
+    dbg.data["verdict"] = report.verdict
+    dbg.data["score"] = report.score
+    dbg.data["static"] = {
+        "js_files_scanned": [str(p.relative_to(payload_root))
+                             for p in iter_js_files(payload_root)],
+        "ast_unparseable": [f.location for f in findings
+                            if f.id.startswith("AST-UNPARSEABLE")],
+        "findings_by_category": dict(Counter(f.category for f in findings)),
+        "n_static": sum(1 for f in findings if f.location != _DYNAMIC_LOC),
+        "n_dynamic": sum(1 for f in findings if f.location == _DYNAMIC_LOC),
+    }
+    dbg.data["dynamic"]["behavior_event_count"] = len(behavior)
+    dbg.data["dynamic"]["decoded_strings"] = [
+        b.detail for b in behavior if b.kind in ("decode", "eval")]
 
 
 @cli.command()
