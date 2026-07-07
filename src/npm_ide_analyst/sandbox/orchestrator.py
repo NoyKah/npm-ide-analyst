@@ -1,16 +1,19 @@
 # src/npm_ide_analyst/sandbox/orchestrator.py
 from __future__ import annotations
 
+import io
 import json
+import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 import uuid
 from pathlib import Path
 
 from ..models import ArtifactType, BehaviorEvent
-from .events import load_event_log
+from .events import load_event_log, parse_event_log
 
 IMAGE_TAG = "npm-ide-analyst-sandbox:latest"
 _DOCKER_DIR = Path(__file__).parent / "docker"
@@ -102,10 +105,20 @@ def build_image(*, assume_docker: bool = False) -> None:
     )
 
 
+def _is_remote_docker() -> bool:
+    """True when the docker CLI targets a non-local daemon (DOCKER_HOST set).
+
+    Bind mounts and `docker cp` of local paths don't work against a remote
+    daemon, so remote detonation uses the mount-free stream transport instead.
+    """
+    return bool(os.environ.get("DOCKER_HOST"))
+
+
 def detonate(payload_root: Path, artifact_type: ArtifactType,
              timeout: int = 30, *, assume_docker: bool = False,
              sinkhole: bool = False,
              trace_native: bool = False,
+             remote: bool = False,
              debug: dict | None = None) -> list[BehaviorEvent]:
     # `assume_docker` lets a caller that already ran docker_available() skip the
     # redundant ~15s `docker info` probe; standalone callers still verify.
@@ -113,15 +126,78 @@ def detonate(payload_root: Path, artifact_type: ArtifactType,
     if not assume_docker and not docker_available():
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
+    use_stream = remote or _is_remote_docker()
     if debug is not None:
-        debug["mode"] = "sinkhole" if sinkhole else "isolated"
+        debug["mode"] = "sinkhole" if (sinkhole and not use_stream) else "isolated"
         debug["runner"] = runner
-    if sinkhole:
+    # Sinkhole provisioning assumes a local daemon (internal network + IP
+    # discovery); over a remote daemon we fall back to isolated stream detonation.
+    if sinkhole and not use_stream:
         return _detonate_with_sinkhole(payload_root, runner, timeout,
                                        trace_native=trace_native, debug=debug)
-    return _detonate_isolated(payload_root, runner, timeout,
-                              _detonation_flags(trace_native=trace_native),
+    flags = _detonation_flags(trace_native=trace_native)
+    if use_stream:
+        return _detonate_via_stream(payload_root, runner, timeout, flags,
+                                    trace_native=trace_native, debug=debug)
+    return _detonate_isolated(payload_root, runner, timeout, flags,
                               trace_native=trace_native, debug=debug)
+
+
+def _detonate_via_stream(payload_root: Path, runner: str, timeout: int,
+                         flags: list[str], trace_native: bool = False,
+                         debug: dict | None = None) -> list[BehaviorEvent]:
+    """Mount-free transport for a REMOTE docker daemon.
+
+    The sample is piped in as a gzip tar on the container's stdin (extracted into
+    a tmpfs), and behavior events come back on stdout. No bind mounts and no
+    `docker cp`, so local host paths are irrelevant to the remote daemon. Every
+    isolation flag is preserved (incl. --read-only and --network none).
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        # Add the sample's CONTENTS (not a top-level "." entry): the non-root
+        # user can't chmod/utime the tmpfs mount point itself, and tar would
+        # fail on that entry. Its own children extract fine.
+        for item in sorted(payload_root.iterdir()):
+            tf.add(item, arcname=item.name)
+    tar_bytes = buf.getvalue()
+
+    trace_env = ["-e", "ANALYST_TRACE_NATIVE=1"] if trace_native else []
+    # Extract stdin into the sample tmpfs, then exec the harness. ANALYST_EVENT_LOG
+    # is cleared so emit.js writes JSON-lines to stdout instead of a file.
+    inner = (f"tar xzf - -C /work/sample && "
+             f"exec node -r /harness/preload.js /harness/{runner}")
+    cmd = [
+        "docker", "run", "-i",
+        *flags,
+        # mode=1777 so the non-root detonation user can extract into the tmpfs.
+        "--tmpfs", "/work/sample:rw,size=64m,mode=1777",
+        "-e", "ANALYST_SAMPLE_DIR=/work/sample",
+        "-e", "ANALYST_EVENT_LOG=",
+        *trace_env,
+        "--entrypoint", "sh",
+        IMAGE_TAG, "-c", inner,
+    ]
+    if debug is not None:
+        debug["transport"] = "stream"
+        debug["run_argv"] = cmd
+        debug["image"] = IMAGE_TAG
+    events_text = ""
+    try:
+        proc = subprocess.run(cmd, input=tar_bytes, capture_output=True,
+                              timeout=timeout + 15)
+        events_text = proc.stdout.decode("utf-8", "replace")
+        if debug is not None:
+            debug["returncode"] = proc.returncode
+            debug["stderr"] = proc.stderr.decode("utf-8", "replace")[:6000]
+    except subprocess.TimeoutExpired as exc:
+        # --rm reaps the container when the docker client is killed; keep partial.
+        if debug is not None:
+            debug["timed_out"] = True
+        events_text = (exc.stdout or b"").decode("utf-8", "replace") if exc.stdout else ""
+    if debug is not None:
+        debug["raw_event_log"] = events_text[:40000]
+    return parse_event_log(events_text)
 
 
 def _detonate_isolated(payload_root: Path, runner: str, timeout: int,

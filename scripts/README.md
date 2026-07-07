@@ -75,6 +75,38 @@ python samples/colorz-utill/build.py --out ./out
 - **Node.js** — only needed for the harness *dev tests*; the analyzer itself runs
   Node inside the container, so a host Node is optional for normal use.
 
+## Remote Docker host (avoids nested virtualization)
+
+If you run the analyzer inside a **Windows VM**, Docker Desktop needs WSL2 — a VM
+inside your VM (nested virtualization), which is often painful or unavailable.
+You can sidestep it entirely: orchestrate from Windows but **detonate on a
+separate Linux Docker daemon**. Your Windows side needs no virtualization at all.
+
+**On the Linux box** (a spare host, another VM, or a cloud instance): install
+Docker Engine (`./scripts/setup.sh`, or `curl -fsSL https://get.docker.com | sh`),
+and make sure you can SSH into it with key-based auth.
+
+**On Windows** (needs the `docker` CLI and the built-in OpenSSH client):
+
+```powershell
+$env:DOCKER_HOST = "ssh://user@linux-box"     # point the CLI at the remote daemon
+docker info                                    # should report the remote engine
+.\.venv\Scripts\npm-ide-analyst.exe analyze <sample> --out out --dynamic
+```
+
+When `DOCKER_HOST` is set, the tool automatically switches to a **mount-free
+stream transport** — the sample is piped to the container over stdin and events
+come back over stdout, so no local paths need to exist on the remote host. Every
+isolation flag (`--network none`, `--read-only`, non-root, `--cap-drop ALL`,
+resource limits) is preserved. You'll see `NOTE: detonating on remote Docker
+daemon ...`. The sandbox image builds on the remote daemon on first run (the
+build context is streamed).
+
+Notes:
+- `--sinkhole` is **not** supported against a remote daemon (it provisions a
+  local internal network); it falls back to isolated detonation with a warning.
+- `--dynamic` and `--trace-native` work normally over the remote daemon.
+
 ## Manual fallback
 
 If you'd rather not auto-install Docker:

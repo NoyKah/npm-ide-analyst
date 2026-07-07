@@ -86,6 +86,15 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
             # Docker was just verified above; tell the sandbox helpers to trust
             # that rather than each re-running the ~15s `docker info` probe.
             try:
+                remote_host = os.environ.get("DOCKER_HOST")
+                if remote_host:
+                    click.echo(f"NOTE: detonating on remote Docker daemon "
+                               f"({remote_host}) via mount-free stream transport.",
+                               err=True)
+                    if sinkhole:
+                        click.echo("WARNING: --sinkhole is not supported on a "
+                                   "remote daemon; using isolated detonation.",
+                                   err=True)
                 if trace_native:
                     click.echo(
                         "WARNING: --trace-native adds CAP_SYS_PTRACE (weakening "
