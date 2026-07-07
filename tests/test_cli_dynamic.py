@@ -115,7 +115,7 @@ def test_analyze_sinkhole_passes_flag_to_detonate(tmp_path, monkeypatch):
     monkeypatch.setattr(climod, "build_image", lambda *a, **k: None)
 
     def fake_detonate(root, artifact_type, assume_docker=False, sinkhole=False,
-                      trace_native=False):
+                      trace_native=False, debug=None):
         calls["sinkhole"] = sinkhole
         return []
 

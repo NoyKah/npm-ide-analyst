@@ -105,23 +105,29 @@ def build_image(*, assume_docker: bool = False) -> None:
 def detonate(payload_root: Path, artifact_type: ArtifactType,
              timeout: int = 30, *, assume_docker: bool = False,
              sinkhole: bool = False,
-             trace_native: bool = False) -> list[BehaviorEvent]:
+             trace_native: bool = False,
+             debug: dict | None = None) -> list[BehaviorEvent]:
     # `assume_docker` lets a caller that already ran docker_available() skip the
     # redundant ~15s `docker info` probe; standalone callers still verify.
+    # `debug`, when given, is populated with container diagnostics + raw log.
     if not assume_docker and not docker_available():
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
+    if debug is not None:
+        debug["mode"] = "sinkhole" if sinkhole else "isolated"
+        debug["runner"] = runner
     if sinkhole:
         return _detonate_with_sinkhole(payload_root, runner, timeout,
-                                       trace_native=trace_native)
+                                       trace_native=trace_native, debug=debug)
     return _detonate_isolated(payload_root, runner, timeout,
                               _detonation_flags(trace_native=trace_native),
-                              trace_native=trace_native)
+                              trace_native=trace_native, debug=debug)
 
 
 def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
                        flags: list[str],
-                       trace_native: bool = False) -> list[BehaviorEvent]:
+                       trace_native: bool = False,
+                       debug: dict | None = None) -> list[BehaviorEvent]:
     out_dir = Path(tempfile.mkdtemp(prefix="analyst-out-"))
     container_name = f"analyst-det-{uuid.uuid4().hex[:12]}"
     try:
@@ -143,13 +149,27 @@ def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
             IMAGE_TAG,
             f"/harness/{runner}",
         ]
+        if debug is not None:
+            debug["run_argv"] = cmd
+            debug["image"] = IMAGE_TAG
         try:
-            subprocess.run(cmd, capture_output=True, timeout=timeout + 15)
+            proc = subprocess.run(cmd, capture_output=True, timeout=timeout + 15)
+            if debug is not None:
+                debug["returncode"] = proc.returncode
+                debug["stdout"] = proc.stdout.decode("utf-8", "replace")[:6000]
+                debug["stderr"] = proc.stderr.decode("utf-8", "replace")[:6000]
         except subprocess.TimeoutExpired:
             # Force-reap the named container; partial log is still ingested.
+            if debug is not None:
+                debug["timed_out"] = True
             subprocess.run(["docker", "rm", "-f", container_name],
                            capture_output=True, timeout=30)
-        return load_event_log(out_dir / "events.jsonl")
+        log_file = out_dir / "events.jsonl"
+        if debug is not None and log_file.exists():
+            # Raw (unfiltered) event log, including internal 'harness' events.
+            debug["raw_event_log"] = log_file.read_text(
+                encoding="utf-8", errors="replace")[:40000]
+        return load_event_log(log_file)
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 
@@ -177,7 +197,8 @@ def _sinkhole_ip(name: str, net_name: str) -> str | None:
 
 def _detonate_with_sinkhole(payload_root: Path, runner: str,
                             timeout: int,
-                            trace_native: bool = False) -> list[BehaviorEvent]:
+                            trace_native: bool = False,
+                            debug: dict | None = None) -> list[BehaviorEvent]:
     net_name = f"analyst-net-{uuid.uuid4().hex[:12]}"
     sink_name = f"analyst-sink-{uuid.uuid4().hex[:12]}"
     sink_out = Path(tempfile.mkdtemp(prefix="analyst-sink-"))
@@ -218,13 +239,15 @@ def _detonate_with_sinkhole(payload_root: Path, runner: str,
         # ready, or IP undiscoverable) -> degrade to a normal --network none
         # isolated detonation rather than a DNS-less, capture-less internal run.
         if not ready or not sink_ip:
+            if debug is not None:
+                debug["sinkhole_degraded"] = True
             return _detonate_isolated(payload_root, runner, timeout,
                                       _detonation_flags(trace_native=trace_native),
-                                      trace_native=trace_native)
+                                      trace_native=trace_native, debug=debug)
         # 5. Detonate on the internal network, DNS -> sinkhole.
         flags = _detonation_flags(net_name, sink_ip, trace_native=trace_native)
         det_events = _detonate_isolated(payload_root, runner, timeout, flags,
-                                        trace_native=trace_native)
+                                        trace_native=trace_native, debug=debug)
         # 6. Merge detonation events with the sinkhole's captured dialog.
         sink_events = load_event_log(sink_out / "requests.jsonl")
         return det_events + sink_events
