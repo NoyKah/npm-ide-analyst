@@ -149,35 +149,45 @@ def _detonate_with_sinkhole(payload_root: Path, runner: str,
     sink_out = Path(tempfile.mkdtemp(prefix="analyst-sink-"))
     try:
         sink_out.chmod(0o777)
-        # 1. Internal network: no route to the real internet.
-        subprocess.run(["docker", "network", "create", "--internal",
-                        "--driver", "bridge", net_name],
-                       capture_output=True, timeout=60, check=True)
-        # 2. Sinkhole container. Runs as root SOLELY so CAP_NET_BIND_SERVICE is
-        #    effective for binding 53/80/443 (Docker does not add caps to the
-        #    ambient set for non-root). No sample code runs here; read-only,
-        #    cap-dropped, resource-limited, on an internet-less network.
-        subprocess.run([
-            "docker", "run", "-d", "--rm", "--name", sink_name,
-            "--network", net_name,
-            "--user", "0:0",
-            "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE",
-            "--security-opt", "no-new-privileges",
-            "--read-only", "--tmpfs", "/tmp:rw,size=8m",
-            "--memory", "128m", "--cpus", "1", "--pids-limit", "64",
-            "-v", f"{sink_out.resolve()}:/work/sinkout:rw",
-            "-e", "ANALYST_EVENT_LOG=/work/sinkout/requests.jsonl",
-            "--entrypoint", "node",
-            IMAGE_TAG, "/harness/sinkhole.js",
-        ], capture_output=True, timeout=60, check=True)
-        # 3. Wait for readiness; degrade to isolated detonation if it never binds.
-        if not _wait_for_sinkhole(sink_name, timeout=20):
+        sink_ip = None
+        ready = False
+        try:
+            # 1. Internal network: no route to the real internet.
+            subprocess.run(["docker", "network", "create", "--internal",
+                            "--driver", "bridge", net_name],
+                           capture_output=True, timeout=60, check=True)
+            # 2. Sinkhole container. Runs as root SOLELY so CAP_NET_BIND_SERVICE is
+            #    effective for binding 53/80/443 (Docker does not add caps to the
+            #    ambient set for non-root). No sample code runs here; read-only,
+            #    cap-dropped, resource-limited, on an internet-less network.
+            subprocess.run([
+                "docker", "run", "-d", "--rm", "--name", sink_name,
+                "--network", net_name,
+                "--user", "0:0",
+                "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE",
+                "--security-opt", "no-new-privileges",
+                "--read-only", "--tmpfs", "/tmp:rw,size=8m",
+                "--memory", "128m", "--cpus", "1", "--pids-limit", "64",
+                "-v", f"{sink_out.resolve()}:/work/sinkout:rw",
+                "-e", "ANALYST_EVENT_LOG=/work/sinkout/requests.jsonl",
+                "--entrypoint", "node",
+                IMAGE_TAG, "/harness/sinkhole.js",
+            ], capture_output=True, timeout=60, check=True)
+            # 3. Wait for readiness.
+            ready = _wait_for_sinkhole(sink_name, timeout=20)
+            # 4. Discover the sinkhole IP for the detonation container's resolver.
+            if ready:
+                sink_ip = _sinkhole_ip(sink_name, net_name)
+        except (subprocess.SubprocessError, OSError):
+            ready = False
+        # Could not stand up a usable sinkhole (provision failed, never became
+        # ready, or IP undiscoverable) -> degrade to a normal --network none
+        # isolated detonation rather than a DNS-less, capture-less internal run.
+        if not ready or not sink_ip:
             return _detonate_isolated(payload_root, runner, timeout,
                                       _detonation_flags())
-        # 4. Discover the sinkhole IP for the detonation container's resolver.
-        sink_ip = _sinkhole_ip(sink_name, net_name)
-        flags = _detonation_flags(net_name, sink_ip)
         # 5. Detonate on the internal network, DNS -> sinkhole.
+        flags = _detonation_flags(net_name, sink_ip)
         det_events = _detonate_isolated(payload_root, runner, timeout, flags)
         # 6. Merge detonation events with the sinkhole's captured dialog.
         sink_events = load_event_log(sink_out / "requests.jsonl")
