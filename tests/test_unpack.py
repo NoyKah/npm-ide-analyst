@@ -3,13 +3,32 @@ import tarfile
 import zipfile
 from pathlib import Path
 import pytest
-from npm_ide_analyst.acquire.unpack import unpack, detect_artifact_type
+from npm_ide_analyst.acquire.unpack import unpack, detect_artifact_type, find_payload_root
 from npm_ide_analyst.models import ArtifactType
 
 
 def _write_pkg_json(d: Path, extra: dict):
     d.mkdir(parents=True, exist_ok=True)
     (d / "package.json").write_text(json.dumps({"name": "x", "version": "1.0.0", **extra}))
+
+
+def test_unpack_finds_deeply_nested_package_root(tmp_path):
+    # Real samples arrive nested (e.g. the tiaan sample: .../tiaan/package/).
+    src = tmp_path / "sample"
+    nested = src / "1.0.2" / "tmp" / "abc" / "tiaan" / "package"
+    _write_pkg_json(nested, {"scripts": {"postinstall": "node ./s.js"}})
+    root = unpack(src, tmp_path / "work")
+    assert (root / "package.json").exists()
+    assert root.name == "package"
+    assert detect_artifact_type(root) == ArtifactType.NPM
+
+
+def test_find_payload_root_ignores_node_modules(tmp_path):
+    (tmp_path / "node_modules" / "dep").mkdir(parents=True)
+    (tmp_path / "node_modules" / "dep" / "package.json").write_text('{"name":"dep"}')
+    real = tmp_path / "wrapperdir" / "the-pkg"
+    _write_pkg_json(real, {})
+    assert find_payload_root(tmp_path) == real
 
 
 def test_unpack_directory_npm(tmp_path):
