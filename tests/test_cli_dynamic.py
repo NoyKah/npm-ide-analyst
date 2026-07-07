@@ -71,3 +71,25 @@ def test_analyze_dynamic_degrades_gracefully_when_detonation_fails(tmp_path, mon
     assert (out / "report.json").exists()
     data = json.loads((out / "report.json").read_text())
     assert data["behavior"] == []
+
+
+def test_analyze_dynamic_probes_docker_only_once(tmp_path, monkeypatch):
+    calls = {"n": 0}
+
+    def _probe():
+        calls["n"] += 1
+        return True
+
+    monkeypatch.setattr("npm_ide_analyst.cli.docker_available", _probe)
+    monkeypatch.setattr("npm_ide_analyst.cli.build_image", lambda *a, **k: None)
+    monkeypatch.setattr("npm_ide_analyst.cli.detonate", lambda *a, **k: [])
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps({"name": "evil"}))
+    out = tmp_path / "out"
+
+    result = CliRunner().invoke(cli, ["analyze", str(pkg), "--out", str(out), "--dynamic"])
+
+    assert result.exit_code == 0, result.output
+    assert calls["n"] == 1
