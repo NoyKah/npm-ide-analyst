@@ -65,7 +65,12 @@ function parseAndEmit(traceText, argv) {
     const name = m[1];
     if (!NOTABLE.has(name)) continue;
     counts[name] = (counts[name] || 0) + 1;
-    if (counts[name] > PER_NAME_CAP) continue;
+    if (counts[name] > PER_NAME_CAP) {
+      if (counts[name] === PER_NAME_CAP + 1) {
+        emit('syscall', `[truncated: >${PER_NAME_CAP} ${name} events]`, { syscall: name, truncated: true });
+      }
+      continue;
+    }
     const sensitive = SENSITIVE.test(line);
     const detail = line.trim().slice(0, 300);
     emit('syscall', `${name}: ${detail}`, {
@@ -78,6 +83,8 @@ function parseAndEmit(traceText, argv) {
 }
 
 function traceExec(fnName, args, origFn) {
+  // origFn is intentionally unused: we re-exec via strace + reconstructed
+  // argv rather than calling the original function; kept for call-site symmetry.
   _seq += 1;
   const tracePath = `/tmp/analyst-trace-${process.pid}-${_seq}.log`;
   const argv = toArgv(fnName, args);
