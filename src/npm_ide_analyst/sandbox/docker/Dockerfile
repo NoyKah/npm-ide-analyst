@@ -1,6 +1,13 @@
 # src/npm_ide_analyst/sandbox/docker/Dockerfile
 FROM node:22-bookworm-slim
 
+# strace is required only for the opt-in --trace-native mode (runs under
+# --cap-add SYS_PTRACE at runtime). Installed unconditionally; harmless unless
+# that mode is enabled.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends strace \
+ && rm -rf /var/lib/apt/lists/*
+
 # Non-root user for detonation
 RUN useradd -m -u 1000 analyst || true
 
