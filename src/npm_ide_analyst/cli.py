@@ -16,9 +16,7 @@ from .models import Report, Sample
 from .report.html_report import write_html
 from .report.json_report import load_report, write_json
 from .sandbox.findings import behavior_to_findings
-from .sandbox.orchestrator import (
-    SandboxUnavailable, build_image, detonate, docker_available,
-)
+from .sandbox.orchestrator import build_image, detonate, docker_available
 from .static.engine import run_static
 
 
@@ -73,7 +71,10 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool) -> N
                     click.echo("NOTE: the sinkhole captures hostname-based C2; "
                                "hard-coded public IPs are not routed on the "
                                "internal network.", err=True)
-            except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:
+            except Exception as exc:
+                # Detonation is best-effort: any failure (Docker error, harness
+                # crash, sinkhole provisioning failure) degrades to a static-only
+                # report rather than aborting triage. Intentionally broad.
                 click.echo(f"WARNING: detonation failed ({exc}); "
                            "continuing static-only.", err=True)
                 behavior = []
