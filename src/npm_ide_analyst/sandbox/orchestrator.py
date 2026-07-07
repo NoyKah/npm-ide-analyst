@@ -71,7 +71,7 @@ def build_image() -> None:
 
 
 def detonate(payload_root: Path, artifact_type: ArtifactType,
-             timeout: int = 30) -> list[BehaviorEvent]:
+             timeout: int = 30, trace_native: bool = False) -> list[BehaviorEvent]:
     if not docker_available():
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
@@ -86,14 +86,16 @@ def detonate(payload_root: Path, artifact_type: ArtifactType,
         # user can create the log file. The sample mount stays :ro and every
         # DOCKER_RUN_FLAGS entry stays intact.
         out_dir.chmod(0o777)
+        trace_env = ["-e", "ANALYST_TRACE_NATIVE=1"] if trace_native else []
         cmd = [
             "docker", "run",
-            *DOCKER_RUN_FLAGS,
+            *run_flags(trace_native),
             "--name", container_name,
             "-v", f"{payload_root.resolve()}:/work/sample:ro",
             "-v", f"{out_dir.resolve()}:/work/hostout:rw",
             "-e", "ANALYST_SAMPLE_DIR=/work/sample",
             "-e", "ANALYST_EVENT_LOG=/work/hostout/events.jsonl",
+            *trace_env,
             IMAGE_TAG,
             f"/harness/{runner}",
         ]
