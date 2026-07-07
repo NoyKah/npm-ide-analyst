@@ -102,9 +102,29 @@ $DOCKER build \
   -t npm-ide-analyst-sandbox:latest \
   src/npm_ide_analyst/sandbox
 
-# ---- smoke test ----
-log "Smoke test"
+# ---- smoke test (static) ----
+log "Smoke test (static pipeline)"
 ./.venv/bin/python -m pytest -q tests/test_smoke.py tests/test_sample_fixture.py
+
+# ---- smoke test (dynamic detonation) ----
+# The analyzer's --dynamic path calls `docker` directly (no sudo), so only run
+# this when Docker works without sudo; otherwise it would degrade to static-only.
+if [ "$NEED_RELOGIN" -eq 0 ]; then
+  log "Smoke test (dynamic detonation)"
+  SMOKE_DIR="$(mktemp -d)"
+  SAMPLE_TGZ="$(./.venv/bin/python samples/colorz-utill/build.py --out "$SMOKE_DIR")"
+  ./.venv/bin/npm-ide-analyst analyze "$SAMPLE_TGZ" --out "$SMOKE_DIR/report" --dynamic
+  N="$(./.venv/bin/python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["behavior"]))' \
+        "$SMOKE_DIR/report/report.json" 2>/dev/null || echo 0)"
+  if [ "${N:-0}" -gt 0 ]; then
+    echo "detonation OK: $N behavior events captured"
+  else
+    warn "dynamic run produced no behavior events - check that Docker uses Linux containers."
+  fi
+  rm -rf "$SMOKE_DIR"
+else
+  warn "skipping dynamic smoke test: log out/in (or 'newgrp docker') so Docker works without sudo, then re-run."
+fi
 
 log "Done."
 echo

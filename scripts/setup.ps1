@@ -95,6 +95,29 @@ if ($dockerReady) {
 Log "Smoke test (static pipeline)"
 & $venvPy -m pytest -q tests/test_smoke.py tests/test_sample_fixture.py | Out-Host
 
+# ---- smoke test (dynamic detonation, only when Docker is ready) ----
+if ($dockerReady) {
+    Log "Smoke test (dynamic detonation)"
+    $smoke = Join-Path $env:TEMP ("npmide-smoke-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    New-Item -ItemType Directory -Force -Path $smoke | Out-Null
+    try {
+        $tgz = (& $venvPy samples/colorz-utill/build.py --out $smoke | Select-Object -Last 1).Trim()
+        & (Join-Path $RepoRoot '.venv\Scripts\npm-ide-analyst.exe') `
+            analyze $tgz --out (Join-Path $smoke 'report') --dynamic | Out-Host
+        $rpt = Join-Path $smoke 'report\report.json'
+        if (Test-Path $rpt) {
+            $n = @((Get-Content $rpt -Raw | ConvertFrom-Json).behavior).Count
+            if ($n -gt 0) {
+                Write-Host "detonation OK: $n behavior events captured" -ForegroundColor Green
+            } else {
+                Warn "dynamic run produced no behavior events - check that Docker uses Linux containers."
+            }
+        }
+    } finally {
+        Remove-Item -Recurse -Force $smoke -ErrorAction SilentlyContinue
+    }
+}
+
 Log "Done."
 Write-Host ""
 Write-Host "Run the tool with:"
