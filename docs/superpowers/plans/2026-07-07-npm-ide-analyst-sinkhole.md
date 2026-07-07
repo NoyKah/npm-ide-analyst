@@ -544,7 +544,13 @@ git commit -m "feat: map c2 dialog events to HIGH findings"
 
 **Files:**
 - Modify: `src/npm_ide_analyst/sandbox/orchestrator.py`
-- Test: `tests/test_sandbox_orchestrator.py` (append; these tests are UNGATED — pure flag logic, no Docker)
+- Test: `tests/test_detonation_flags.py` (CREATE — a NEW, UNGATED file; pure flag logic, no Docker)
+
+> **Why a new file, not `test_sandbox_orchestrator.py`:** that module has a
+> module-level `pytestmark = skipif(not docker_available())`, which would skip
+> these flag tests whenever Docker is absent — but their whole purpose is to guard
+> the isolation-flag invariant in a Docker-less CI. They must live in an ungated
+> module.
 
 **Interfaces:**
 - Produces:
@@ -554,9 +560,13 @@ git commit -m "feat: map c2 dialog events to HIGH findings"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `tests/test_sandbox_orchestrator.py` (these do NOT require Docker — add them ABOVE the `pytestmark`-gated tests or in a separate ungated section; import is already present):
+Create `tests/test_detonation_flags.py` (no Docker gate — these run everywhere):
 
 ```python
+# tests/test_detonation_flags.py
+from npm_ide_analyst.sandbox import orchestrator as orch
+
+
 def _has_pair(flags, a, b):
     return any(flags[i] == a and flags[i + 1] == b
               for i in range(len(flags) - 1))
@@ -590,7 +600,7 @@ def test_sinkhole_detonation_flags_keep_isolation_and_route_to_sinkhole():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/test_sandbox_orchestrator.py::test_default_detonation_flags_use_network_none tests/test_sandbox_orchestrator.py::test_sinkhole_detonation_flags_keep_isolation_and_route_to_sinkhole -v`
+Run: `python -m pytest tests/test_detonation_flags.py -v`
 Expected: FAIL — `orch._detonation_flags` does not exist (`AttributeError`).
 
 - [ ] **Step 3: Refactor `orchestrator.py` flags**
@@ -637,13 +647,13 @@ def _detonation_flags(network: str | None = None,
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `python -m pytest tests/test_sandbox_orchestrator.py::test_default_detonation_flags_use_network_none tests/test_sandbox_orchestrator.py::test_sinkhole_detonation_flags_keep_isolation_and_route_to_sinkhole -v`
+Run: `python -m pytest tests/test_detonation_flags.py -v`
 Expected: PASS (these run even without Docker).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/npm_ide_analyst/sandbox/orchestrator.py tests/test_sandbox_orchestrator.py
+git add src/npm_ide_analyst/sandbox/orchestrator.py tests/test_detonation_flags.py
 git commit -m "refactor: extract _detonation_flags with sinkhole-aware network selection"
 ```
 
