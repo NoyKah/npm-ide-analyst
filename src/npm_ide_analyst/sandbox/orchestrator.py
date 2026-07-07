@@ -43,8 +43,10 @@ def docker_available() -> bool:
         return False
 
 
-def build_image() -> None:
-    if not docker_available():
+def build_image(*, assume_docker: bool = False) -> None:
+    # `assume_docker` lets a caller that already ran docker_available() skip the
+    # redundant ~15s `docker info` probe; standalone callers still verify.
+    if not assume_docker and not docker_available():
         raise SandboxUnavailable("docker is not available")
     # Build context is the sandbox dir so the Dockerfile can COPY harness/.
     ctx = Path(__file__).parent
@@ -56,8 +58,10 @@ def build_image() -> None:
 
 
 def detonate(payload_root: Path, artifact_type: ArtifactType,
-             timeout: int = 30) -> list[BehaviorEvent]:
-    if not docker_available():
+             timeout: int = 30, *, assume_docker: bool = False) -> list[BehaviorEvent]:
+    # `assume_docker` lets a caller that already ran docker_available() skip the
+    # redundant ~15s `docker info` probe; standalone callers still verify.
+    if not assume_docker and not docker_available():
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
     out_dir = Path(tempfile.mkdtemp(prefix="analyst-out-"))

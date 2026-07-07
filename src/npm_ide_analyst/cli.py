@@ -59,9 +59,12 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool) -> None:
             click.echo("WARNING: --dynamic requested but Docker is unavailable; "
                        "running static-only.", err=True)
         else:
+            # Docker was just verified above; tell the sandbox helpers to trust
+            # that rather than each re-running the ~15s `docker info` probe.
             try:
-                build_image()
-                behavior = detonate(payload_root, sample.artifact_type)
+                build_image(assume_docker=True)
+                behavior = detonate(payload_root, sample.artifact_type,
+                                    assume_docker=True)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
             except (SandboxUnavailable, subprocess.CalledProcessError, Exception) as exc:
