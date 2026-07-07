@@ -24,3 +24,21 @@ def test_clean_report_verdict():
     r = Report(sample=make_sample(), findings=[], generated_at="t")
     assert r.verdict == "clean"
     assert r.score == 0
+
+
+def _high(i):
+    return Finding(id=f"H{i}", title="x", severity=Severity.HIGH,
+                   category="c", detail="d")
+
+
+def test_single_high_stays_suspicious():
+    r = Report(sample=make_sample(), findings=[_high(1)], generated_at="t")
+    assert r.verdict == "suspicious"          # one HIGH is not yet "malicious"
+
+
+def test_verdict_escalates_to_malicious_on_multiple_high():
+    # A coordinated multi-stage payload (3+ HIGH findings) reads as malicious.
+    r = Report(sample=make_sample(), findings=[_high(1), _high(2), _high(3)],
+               generated_at="t")
+    assert r.verdict == "malicious"
+    assert r.score >= 100

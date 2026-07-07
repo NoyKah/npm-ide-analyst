@@ -85,7 +85,14 @@ class Report:
         if not self.findings:
             return "clean"
         top = max(self.findings, key=lambda f: _RANK[f.severity]).severity
-        if top == Severity.CRITICAL:
+        high_count = sum(
+            1 for f in self.findings
+            if f.severity in (Severity.HIGH, Severity.CRITICAL)
+        )
+        # Escalate to "malicious" on an explicit CRITICAL, or on the weight of
+        # evidence: multiple independent HIGH findings or a high cumulative score
+        # (a single HIGH is "suspicious"; a coordinated multi-stage payload is not).
+        if top == Severity.CRITICAL or high_count >= 3 or self.score >= 100:
             return "malicious"
         if top in (Severity.HIGH, Severity.MEDIUM):
             return "suspicious"

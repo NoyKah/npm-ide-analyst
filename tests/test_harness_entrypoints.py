@@ -22,6 +22,24 @@ def _detonate(entry: str, sample_dir: Path, tmp_path: Path) -> list[dict]:
     return [json.loads(l) for l in log.read_text().splitlines() if l.strip()] if log.exists() else []
 
 
+def test_npm_evald_require_follows_through_to_network(tmp_path):
+    # Regression: an obfuscated loader that evals code using require() must keep
+    # executing (not abort on "require is not defined"), so the harness sees the
+    # downstream network call. The ONLY network call here lives inside the eval'd
+    # string, so it can only fire if eval'd require() resolves.
+    sample = tmp_path / "pkg"
+    sample.mkdir()
+    (sample / "package.json").write_text(json.dumps(
+        {"name": "p", "scripts": {"postinstall": "node ./s.js"}}))
+    (sample / "s.js").write_text(
+        "eval(\"require('http').get('http://198.51.100.14/beacon')\");",
+        encoding="utf-8")
+    events = _detonate("run-npm.js", sample, tmp_path)
+    assert not any("require is not defined" in e["detail"] for e in events)
+    assert any(e["kind"] == "network" and "198.51.100.14" in e["detail"]
+               for e in events)
+
+
 def test_vsix_activate_is_called(tmp_path):
     sample = tmp_path / "ext"
     sample.mkdir()
