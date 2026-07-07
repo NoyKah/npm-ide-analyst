@@ -31,6 +31,34 @@ def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
     tf.extractall(dest)
 
 
+def find_payload_root(root: Path) -> Path:
+    """Locate the analyzed package's directory within an extracted tree.
+
+    Samples don't always have package.json at the top: npm tarballs wrap it in
+    package/, VSIX in extension/, and real-world samples arrive arbitrarily nested
+    (e.g. .../tiaan/package/package.json). Assuming the top level breaks both
+    artifact-type detection and detonation. Resolve the real root here.
+    """
+    # Fast paths: manifest at the top, or a conventional wrapper directory.
+    if (root / "package.json").exists():
+        return root
+    for wrapper in ("package", "extension"):
+        if (root / wrapper / "package.json").exists():
+            return root / wrapper
+    # Otherwise find the shallowest package.json that isn't a bundled dependency
+    # (node_modules); that's the package actually being analyzed.
+    candidates = [p for p in root.rglob("package.json")
+                  if "node_modules" not in p.parts]
+    if not candidates:
+        return root
+    candidates.sort(key=lambda p: (
+        len(p.relative_to(root).parts),
+        0 if p.parent.name in ("package", "extension") else 1,
+        str(p),
+    ))
+    return candidates[0].parent
+
+
 def unpack(input_path: Path, workdir: Path) -> Path:
     workdir.mkdir(parents=True, exist_ok=True)
     extracted = workdir / "extracted"
@@ -38,19 +66,17 @@ def unpack(input_path: Path, workdir: Path) -> Path:
         if extracted.exists():
             shutil.rmtree(extracted)
         shutil.copytree(input_path, extracted)
-        return extracted
-    suffix = input_path.suffix.lower()
-    if suffix == ".vsix" or suffix == ".zip":
-        with zipfile.ZipFile(input_path) as zf:
-            _safe_extract_zip(zf, extracted)
-        ext_dir = extracted / "extension"
-        return ext_dir if ext_dir.is_dir() else extracted
-    if suffix in (".tgz", ".gz") or input_path.name.endswith(".tar.gz"):
-        with tarfile.open(input_path, "r:gz") as tf:
-            _safe_extract_tar(tf, extracted)
-        pkg_dir = extracted / "package"
-        return pkg_dir if pkg_dir.is_dir() else extracted
-    raise ValueError(f"unsupported input type: {input_path.name}")
+    else:
+        suffix = input_path.suffix.lower()
+        if suffix in (".vsix", ".zip"):
+            with zipfile.ZipFile(input_path) as zf:
+                _safe_extract_zip(zf, extracted)
+        elif suffix in (".tgz", ".gz") or input_path.name.endswith(".tar.gz"):
+            with tarfile.open(input_path, "r:gz") as tf:
+                _safe_extract_tar(tf, extracted)
+        else:
+            raise ValueError(f"unsupported input type: {input_path.name}")
+    return find_payload_root(extracted)
 
 
 def detect_artifact_type(payload_root: Path) -> ArtifactType:

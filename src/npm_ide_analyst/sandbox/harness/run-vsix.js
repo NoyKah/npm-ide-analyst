@@ -13,7 +13,7 @@ async function main() {
   installEvalScope(dir);
   let manifest = {};
   try { manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); }
-  catch (e) { emit('detonation', 'no package.json', {}); }
+  catch (e) { emit('detonation', `package.json unreadable: ${e && e.message}`, {}); }
   const mainRel = manifest.main || './extension.js';
   const target = resolveWithin(dir, mainRel);
   if (!target) {
