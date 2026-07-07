@@ -27,11 +27,15 @@ session often can't see it) — it locates winget under `Program Files\WindowsAp
 tries to bootstrap it, and otherwise falls back to each vendor's **official
 silent installer**. So the old "winget not found" dead end no longer happens.
 
-Docker Desktop needs **WSL2 and usually a reboot** on first install. If the
-script reports Docker isn't ready, reboot, start Docker Desktop (wait for the
-whale icon to settle, Linux containers), and **re-run the script** — it will
-build the sandbox image and finish. Static analysis works without Docker; only
-`--dynamic` needs it.
+Docker Desktop needs **WSL2 and usually a reboot** on first install. The script
+runs `wsl --update` for you (Docker's Linux backend needs a current WSL kernel;
+a stale one triggers Docker's "WSL needs updating" dialog). If the script reports
+Docker isn't ready, reboot, start Docker Desktop (wait for the whale icon to
+settle, Linux containers), and **re-run the script** — it will build the sandbox
+image and finish. Static analysis works without Docker; only `--dynamic` needs it.
+
+If WSL isn't installed at all, run `wsl --install --no-distribution` in an
+elevated shell, reboot, then re-run the setup script.
 
 ## Linux
 
