@@ -18,7 +18,7 @@ def test_sinkhole_degrades_to_isolated_when_ip_unavailable(monkeypatch, tmp_path
     monkeypatch.setattr(orch, "_sinkhole_ip", lambda name, net: None)
     captured = {}
     monkeypatch.setattr(orch, "_detonate_isolated",
-                        lambda pr, r, t, flags: (captured.__setitem__("flags", flags) or []))
+                        lambda pr, r, t, flags, trace_native=False: (captured.__setitem__("flags", flags) or []))
 
     orch._detonate_with_sinkhole(tmp_path, "run-vsix.js", 30)
 
@@ -37,7 +37,7 @@ def test_sinkhole_degrades_when_provisioning_raises(monkeypatch, tmp_path):
     monkeypatch.setattr(orch.subprocess, "run", raising_run)
     captured = {}
     monkeypatch.setattr(orch, "_detonate_isolated",
-                        lambda pr, r, t, flags: (captured.__setitem__("flags", flags) or []))
+                        lambda pr, r, t, flags, trace_native=False: (captured.__setitem__("flags", flags) or []))
 
     orch._detonate_with_sinkhole(tmp_path, "run-vsix.js", 30)
 
@@ -57,7 +57,7 @@ def test_sinkhole_teardown_always_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(orch.subprocess, "run", rec_run)
     monkeypatch.setattr(orch, "_wait_for_sinkhole", lambda name, timeout=20: True)
     monkeypatch.setattr(orch, "_sinkhole_ip", lambda name, net: "10.0.0.2")
-    monkeypatch.setattr(orch, "_detonate_isolated", lambda pr, r, t, flags: [])
+    monkeypatch.setattr(orch, "_detonate_isolated", lambda pr, r, t, flags, trace_native=False: [])
 
     orch._detonate_with_sinkhole(tmp_path, "run-vsix.js", 30)
 

@@ -36,3 +36,15 @@ def test_c2_event_maps_to_high_finding():
     assert findings[0].severity == Severity.HIGH
     assert findings[0].category == "c2"
     assert findings[0].location == "[dynamic]"
+
+
+def test_maps_native_and_syscall():
+    events = [
+        BehaviorEvent(kind="native", detail="strace ./dropped -> exit 0"),
+        BehaviorEvent(kind="syscall", detail="connect: 1.2.3.4:443"),
+    ]
+    findings = behavior_to_findings(events)
+    cats = {f.category: f.severity for f in findings}
+    assert cats["native-exec"] == Severity.HIGH
+    assert cats["native-syscall"] == Severity.MEDIUM
+    assert all(f.location == "[dynamic]" for f in findings)

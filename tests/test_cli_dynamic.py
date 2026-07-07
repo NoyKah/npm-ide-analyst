@@ -114,7 +114,8 @@ def test_analyze_sinkhole_passes_flag_to_detonate(tmp_path, monkeypatch):
     monkeypatch.setattr(climod, "docker_available", lambda: True)
     monkeypatch.setattr(climod, "build_image", lambda *a, **k: None)
 
-    def fake_detonate(root, artifact_type, assume_docker=False, sinkhole=False):
+    def fake_detonate(root, artifact_type, assume_docker=False, sinkhole=False,
+                      trace_native=False):
         calls["sinkhole"] = sinkhole
         return []
 
@@ -126,3 +127,15 @@ def test_analyze_sinkhole_passes_flag_to_detonate(tmp_path, monkeypatch):
     result = CliRunner().invoke(cli, ["analyze", str(pkg), "--out", str(out), "--sinkhole"])
     assert result.exit_code == 0, result.output
     assert calls["sinkhole"] is True       # --sinkhole implied detonation + passed flag
+
+
+def test_trace_native_requires_dynamic(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "package.json").write_text(json.dumps({"name": "e"}))
+    out = tmp_path / "out"
+    result = CliRunner().invoke(
+        cli, ["analyze", str(pkg), "--out", str(out), "--trace-native"])
+    assert result.exit_code != 0
+    assert "trace-native" in result.output.lower()
+    assert "dynamic" in result.output.lower()

@@ -38,8 +38,17 @@ def cli() -> None:
               help="Detonate against a real DNS+HTTP(S) sinkhole on an internal, "
                    "internet-less network to capture live C2 dialog for "
                    "hostname-based traffic. Implies --dynamic.")
-def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool) -> None:
+@click.option("--trace-native/--no-trace-native", default=False,
+              help="Under --dynamic/--sinkhole: run dropped/native binaries under "
+                   "strace (adds CAP_SYS_PTRACE, weakening isolation; executes "
+                   "native payload code). Opt-in, default off.")
+def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool,
+            trace_native: bool) -> None:
     """Static analysis of a .vsix, npm .tgz, or directory."""
+    if trace_native and not (dynamic or sinkhole):
+        raise click.UsageError(
+            "--trace-native requires --dynamic or --sinkhole (it deepens "
+            "detonation, which only runs with one of those).")
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "_work"
     payload_root = unpack(input_path, work)
@@ -64,9 +73,16 @@ def analyze(input_path: Path, out_dir: Path, dynamic: bool, sinkhole: bool) -> N
             # Docker was just verified above; tell the sandbox helpers to trust
             # that rather than each re-running the ~15s `docker info` probe.
             try:
+                if trace_native:
+                    click.echo(
+                        "WARNING: --trace-native adds CAP_SYS_PTRACE (weakening "
+                        "container isolation) and EXECUTES native payload code "
+                        "under strace. All other container limits hold. "
+                        "Proceeding.", err=True)
                 build_image(assume_docker=True)
                 behavior = detonate(payload_root, sample.artifact_type,
-                                    assume_docker=True, sinkhole=sinkhole)
+                                    assume_docker=True, sinkhole=sinkhole,
+                                    trace_native=trace_native)
                 findings = findings + behavior_to_findings(behavior)
                 timeline = build_timeline(behavior)
                 if sinkhole:

@@ -13,6 +13,8 @@ _MAP = {
     "dns": ("network", Severity.LOW, "Runtime DNS lookup"),
     "vscode": ("extension-behavior", Severity.MEDIUM, "Editor API use during activation"),
     "file": ("file-write", Severity.LOW, "Runtime file write"),
+    "native": ("native-exec", Severity.HIGH, "Native binary execution (traced)"),
+    "syscall": ("native-syscall", Severity.MEDIUM, "Notable syscall (traced)"),
 }
 
 

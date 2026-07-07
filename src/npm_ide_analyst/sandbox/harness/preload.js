@@ -1,6 +1,8 @@
 // src/npm_ide_analyst/sandbox/harness/preload.js
 'use strict';
 const { emit } = require('./emit.js');
+const { traceExec } = require('./trace.js');
+const TRACE_NATIVE = process.env.ANALYST_TRACE_NATIVE === '1';
 
 // When ANALYST_SINKHOLE is set, the detonation runs on an internet-less internal
 // Docker network with a real sinkhole. Network hooks then LOG and DELEGATE to the
@@ -14,6 +16,11 @@ for (const fn of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFil
   const orig = cp[fn];
   cp[fn] = function (...args) {
     emit('process', `${fn}: ${JSON.stringify(args[0])}`, { fn, args: args.slice(0, 2) });
+    // Opt-in native tracing: actually run the exec under strace (except fork,
+    // which re-execs node and is not a native drop). Default: log + neuter.
+    if (TRACE_NATIVE && fn !== 'fork') {
+      return traceExec(fn, args, orig);
+    }
     // Neuter: do not actually spawn. Return a benign stub.
     if (fn.endsWith('Sync')) return Buffer.from('');
     const cb = args.find((a) => typeof a === 'function');

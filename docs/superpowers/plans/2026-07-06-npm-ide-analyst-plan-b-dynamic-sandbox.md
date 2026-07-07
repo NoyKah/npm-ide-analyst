@@ -1393,6 +1393,6 @@ git commit -m "feat: --dynamic detonation flag + report re-render subcommand"
 
 ## Out of scope (future work)
 - A real DNS+HTTP **sinkhole container** for live multi-round C2 dialog capture (this plan uses in-harness fakenet + `--network none`).
-- Native-binary tracing (Frida/strace) for payloads that drop and run an ELF.
+- Native-binary tracing: strace syscall tracing implemented (opt-in `--trace-native`, see `docs/superpowers/specs/2026-07-07-native-syscall-tracing-design.md`). Frida/API-level tracing remains future work.
 - Windows-container detonation.
 - `filter="data"` on tar extraction (Plan A follow-up) and other Plan A minor backlog.

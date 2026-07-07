@@ -36,11 +36,12 @@ PTRACE_CAP_FLAGS = ["--cap-add", "SYS_PTRACE"]
 
 
 def run_flags(trace_native: bool = False) -> list[str]:
-    """Return the hardened docker run flag vector.
+    """Return the hardened docker run flag vector (default --network none).
 
     Only when trace_native is True is a single capability re-added
     (SYS_PTRACE, required for strace/ptrace under Docker's default seccomp).
-    Every other isolation flag is unchanged. Returns a fresh list.
+    Every other isolation flag is unchanged. Returns a fresh list. Equivalent
+    to ``_detonation_flags(trace_native=trace_native)`` for the default network.
     """
     flags = list(DOCKER_RUN_FLAGS)
     if trace_native:
@@ -49,12 +50,15 @@ def run_flags(trace_native: bool = False) -> list[str]:
 
 
 def _detonation_flags(network: str | None = None,
-                      dns_ip: str | None = None) -> list[str]:
+                      dns_ip: str | None = None,
+                      trace_native: bool = False) -> list[str]:
     """Full ``docker run`` flag vector for the detonation container.
 
     Default mode isolates the container with ``--network none``. Sinkhole mode
     attaches it to an internal network with the sinkhole as DNS resolver and sets
     the two env vars the harness needs; EVERY other isolation flag is identical.
+    Opt-in native tracing re-adds the single ``SYS_PTRACE`` capability (required
+    for strace under Docker's default seccomp) and nothing else.
     """
     flags = list(_ISOLATION_FLAGS)
     if network:
@@ -65,6 +69,8 @@ def _detonation_flags(network: str | None = None,
                   "-e", "NODE_TLS_REJECT_UNAUTHORIZED=0"]
     else:
         flags += ["--network", "none"]
+    if trace_native:
+        flags += PTRACE_CAP_FLAGS
     return flags
 
 
@@ -98,19 +104,24 @@ def build_image(*, assume_docker: bool = False) -> None:
 
 def detonate(payload_root: Path, artifact_type: ArtifactType,
              timeout: int = 30, *, assume_docker: bool = False,
-             sinkhole: bool = False) -> list[BehaviorEvent]:
+             sinkhole: bool = False,
+             trace_native: bool = False) -> list[BehaviorEvent]:
     # `assume_docker` lets a caller that already ran docker_available() skip the
     # redundant ~15s `docker info` probe; standalone callers still verify.
     if not assume_docker and not docker_available():
         raise SandboxUnavailable("docker is not available")
     runner = "run-vsix.js" if artifact_type == ArtifactType.EXTENSION else "run-npm.js"
     if sinkhole:
-        return _detonate_with_sinkhole(payload_root, runner, timeout)
-    return _detonate_isolated(payload_root, runner, timeout, _detonation_flags())
+        return _detonate_with_sinkhole(payload_root, runner, timeout,
+                                       trace_native=trace_native)
+    return _detonate_isolated(payload_root, runner, timeout,
+                              _detonation_flags(trace_native=trace_native),
+                              trace_native=trace_native)
 
 
 def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
-                       flags: list[str]) -> list[BehaviorEvent]:
+                       flags: list[str],
+                       trace_native: bool = False) -> list[BehaviorEvent]:
     out_dir = Path(tempfile.mkdtemp(prefix="analyst-out-"))
     container_name = f"analyst-det-{uuid.uuid4().hex[:12]}"
     try:
@@ -119,6 +130,7 @@ def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
         # container's isolation flags) so uid 1000 can create the log file.
         # The sample mount stays :ro and every isolation flag stays intact.
         out_dir.chmod(0o777)
+        trace_env = ["-e", "ANALYST_TRACE_NATIVE=1"] if trace_native else []
         cmd = [
             "docker", "run",
             *flags,
@@ -127,6 +139,7 @@ def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
             "-v", f"{out_dir.resolve()}:/work/hostout:rw",
             "-e", "ANALYST_SAMPLE_DIR=/work/sample",
             "-e", "ANALYST_EVENT_LOG=/work/hostout/events.jsonl",
+            *trace_env,
             IMAGE_TAG,
             f"/harness/{runner}",
         ]
@@ -163,7 +176,8 @@ def _sinkhole_ip(name: str, net_name: str) -> str | None:
 
 
 def _detonate_with_sinkhole(payload_root: Path, runner: str,
-                            timeout: int) -> list[BehaviorEvent]:
+                            timeout: int,
+                            trace_native: bool = False) -> list[BehaviorEvent]:
     net_name = f"analyst-net-{uuid.uuid4().hex[:12]}"
     sink_name = f"analyst-sink-{uuid.uuid4().hex[:12]}"
     sink_out = Path(tempfile.mkdtemp(prefix="analyst-sink-"))
@@ -205,10 +219,12 @@ def _detonate_with_sinkhole(payload_root: Path, runner: str,
         # isolated detonation rather than a DNS-less, capture-less internal run.
         if not ready or not sink_ip:
             return _detonate_isolated(payload_root, runner, timeout,
-                                      _detonation_flags())
+                                      _detonation_flags(trace_native=trace_native),
+                                      trace_native=trace_native)
         # 5. Detonate on the internal network, DNS -> sinkhole.
-        flags = _detonation_flags(net_name, sink_ip)
-        det_events = _detonate_isolated(payload_root, runner, timeout, flags)
+        flags = _detonation_flags(net_name, sink_ip, trace_native=trace_native)
+        det_events = _detonate_isolated(payload_root, runner, timeout, flags,
+                                        trace_native=trace_native)
         # 6. Merge detonation events with the sinkhole's captured dialog.
         sink_events = load_event_log(sink_out / "requests.jsonl")
         return det_events + sink_events
