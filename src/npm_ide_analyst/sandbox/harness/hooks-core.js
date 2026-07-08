@@ -77,13 +77,33 @@ function childEnv(callerEnv) {
 // the child's event stream reaches us: in file-log mode it writes to the shared
 // ANALYST_EVENT_LOG; in stream mode (ANALYST_EVENT_LOG="") emit -> stdout, which
 // we inherit to the parent's stdout.
-function runReexec(plan, { sync, callerEnv }) {
+function runReexec(plan, { sync, callerEnv, syncReturn = 'buffer' }) {
   const opts = { env: childEnv(callerEnv), stdio: ['ignore', 'inherit', 'inherit'] };
   emit('runtime-reexec', `${plan.runtime} ${plan.target}`,
        { runtime: plan.runtime, script: plan.target });
   if (sync) {
-    REAL_SPAWN_SYNC(plan.file, plan.args, opts);
-    return Buffer.from(''); // execSync/spawnSync callers expect a Buffer/result
+    // Bound the sync spawn by ANALYST_DETONATE_MS so a hung in-sample child
+    // (e.g. execSync('node hang.js')) can't block the whole detonation past
+    // the orchestrator's outer hard-kill.
+    const deadline = Number(process.env.ANALYST_DETONATE_MS) || 8000;
+    const result = REAL_SPAWN_SYNC(plan.file, plan.args,
+      { ...opts, timeout: deadline, killSignal: 'SIGKILL' });
+    if (syncReturn === 'object') {
+      // spawnSync callers read r.status/r.stdout/r.stderr; synthesize a
+      // well-formed SpawnSyncReturns shape. status:0 so the payload proceeds
+      // (consistent with the neuter philosophy and the async path, which also
+      // doesn't surface real child status). stdout/stderr are empty Buffers
+      // because we inherit the child's stdio rather than capture it.
+      return {
+        pid: (result && result.pid) || -1,
+        status: 0,
+        signal: null,
+        stdout: Buffer.from(''),
+        stderr: Buffer.from(''),
+        output: [null, Buffer.from(''), Buffer.from('')],
+      };
+    }
+    return Buffer.from(''); // execSync/execFileSync callers expect a Buffer
   }
   const child = REAL_SPAWN(plan.file, plan.args, opts);
   registerChild(child);
@@ -116,7 +136,11 @@ for (const fn of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFil
     const plan = fn !== 'fork' ? reexecPlan(file, argv) : null;
     if (plan) {
       const callerOpts = args.find((a) => a && typeof a === 'object' && !Array.isArray(a));
-      return runReexec(plan, { sync: isSync, callerEnv: callerOpts && callerOpts.env });
+      return runReexec(plan, {
+        sync: isSync,
+        callerEnv: callerOpts && callerOpts.env,
+        syncReturn: fn === 'spawnSync' ? 'object' : 'buffer',
+      });
     }
     // Not allow-listed: existing behavior (log + trace-native | neuter).
     emit('process', `${fn}: ${JSON.stringify(args[0])}`, { fn, args: args.slice(0, 2) });
