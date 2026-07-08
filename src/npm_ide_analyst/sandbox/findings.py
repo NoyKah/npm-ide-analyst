@@ -21,6 +21,24 @@ _MAP = {
 def behavior_to_findings(events: list[BehaviorEvent]) -> list[Finding]:
     seen: dict[tuple[str, str], Finding] = {}
     for ev in events:
+        if ev.kind == "runtime-reexec":
+            runtime = (ev.data or {}).get("runtime", "")
+            severity = Severity.HIGH if runtime in ("bun", "bunx") else Severity.INFO
+            category = "runtime-reexec"
+            title = "Payload handed to a JS runtime and detonated under instrumentation"
+            key = (category, ev.detail)
+            if key in seen:
+                continue
+            seen[key] = Finding(
+                id=f"DYN-{category}-{len(seen)}",
+                title=title,
+                severity=severity,
+                category=category,
+                detail=f"{title}: {ev.detail}",
+                location="[dynamic]",
+                evidence=ev.detail,
+            )
+            continue
         mapping = _MAP.get(ev.kind)
         if mapping is None:
             continue

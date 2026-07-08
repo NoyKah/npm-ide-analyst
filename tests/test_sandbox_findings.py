@@ -48,3 +48,22 @@ def test_maps_native_and_syscall():
     assert cats["native-exec"] == Severity.HIGH
     assert cats["native-syscall"] == Severity.MEDIUM
     assert all(f.location == "[dynamic]" for f in findings)
+
+
+def test_runtime_reexec_bun_is_high():
+    evs = [BehaviorEvent(kind="runtime-reexec",
+                         detail="bun /work/sample/bun_environment.js",
+                         data={"runtime": "bun", "script": "/work/sample/bun_environment.js"})]
+    fs = behavior_to_findings(evs)
+    assert len(fs) == 1
+    assert fs[0].category == "runtime-reexec"
+    assert fs[0].severity == Severity.HIGH
+
+
+def test_runtime_reexec_node_is_info():
+    evs = [BehaviorEvent(kind="runtime-reexec",
+                         detail="node /work/sample/child.js",
+                         data={"runtime": "node", "script": "/work/sample/child.js"})]
+    fs = behavior_to_findings(evs)
+    assert len(fs) == 1
+    assert fs[0].severity == Severity.INFO
