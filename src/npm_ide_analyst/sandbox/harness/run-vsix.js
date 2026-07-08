@@ -6,6 +6,7 @@ const { emit } = require('./emit.js');
 const { resolveWithin } = require('./resolve-within.js');
 const { makeContext } = require('./vscode-mock.js');
 const { installEvalScope } = require('./eval-scope.js');
+const { waitForChildren } = require('./hooks-core.js');
 
 async function main() {
   const dir = process.env.ANALYST_SAMPLE_DIR || '/work/sample';
@@ -33,5 +34,7 @@ async function main() {
     emit('detonation', `error: ${e && e.message}`, {});
   }
   emit('detonation', 'vsix detonation end', {});
+  const deadline = Number(process.env.ANALYST_DETONATE_MS) || 8000;
+  await waitForChildren(deadline);
 }
 main().then(() => setTimeout(() => process.exit(0), 200));

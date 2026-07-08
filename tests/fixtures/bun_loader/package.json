@@ -1,0 +1,6 @@
+{
+  "name": "bun-loader-fixture",
+  "version": "1.0.0",
+  "description": "Synthetic bun-loader: preinstall spawns bun to run the payload.",
+  "scripts": { "preinstall": "node setup_bun.js" }
+}

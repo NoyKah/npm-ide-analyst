@@ -8,6 +8,21 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends strace \
  && rm -rf /var/lib/apt/lists/*
 
+# Pinned Bun runtime. A real npm supply-chain family (e.g. tiaan) runs its
+# payload under bun to evade node-only instrumentation; the harness re-execs
+# those payloads under bun --preload, so bun must be baked in at build time
+# (runtime is offline). Pinned for reproducibility; no floating "latest".
+ARG BUN_VERSION=1.1.45
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" -o /tmp/bun.zip \
+ && unzip -q /tmp/bun.zip -d /tmp/bun \
+ && install -m 0755 /tmp/bun/bun-linux-x64/bun /usr/local/bin/bun \
+ && ln -sf /usr/local/bin/bun /usr/local/bin/bunx \
+ && rm -rf /tmp/bun.zip /tmp/bun \
+ && test "$(bun --version)" = "${BUN_VERSION}"
+
 # Non-root user for detonation
 RUN useradd -m -u 1000 analyst || true
 

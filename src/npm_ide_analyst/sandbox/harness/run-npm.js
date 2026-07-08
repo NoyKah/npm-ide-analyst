@@ -5,8 +5,9 @@ const fs = require('fs');
 const { emit } = require('./emit.js');
 const { resolveWithin } = require('./resolve-within.js');
 const { installEvalScope } = require('./eval-scope.js');
+const { waitForChildren } = require('./hooks-core.js');
 
-function main() {
+async function main() {
   const dir = process.env.ANALYST_SAMPLE_DIR || '/work/sample';
   emit('detonation', 'npm detonation start', { dir });
   installEvalScope(dir);
@@ -40,6 +41,7 @@ function main() {
     }
   }
   emit('detonation', 'npm detonation end', {});
+  const deadline = Number(process.env.ANALYST_DETONATE_MS) || 8000;
+  await waitForChildren(deadline);
 }
-main();
-setTimeout(() => process.exit(0), 200);
+main().then(() => setTimeout(() => process.exit(0), 200));
