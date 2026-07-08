@@ -52,6 +52,15 @@ def run_flags(trace_native: bool = False) -> list[str]:
     return flags
 
 
+def _detonate_ms(timeout: int) -> int:
+    """Milliseconds the harness waits for re-exec'd children before exiting.
+
+    Leaves ~2s slack under the orchestrator's ``timeout + 15s`` hard kill; never
+    below 1s so a zero/negative timeout still yields a valid deadline.
+    """
+    return max(1000, int(timeout) * 1000 - 2000)
+
+
 def _detonation_flags(network: str | None = None,
                       dns_ip: str | None = None,
                       trace_native: bool = False) -> list[str]:
@@ -189,6 +198,7 @@ def _detonate_via_stream(payload_root: Path, runner: str, timeout: int,
         "--tmpfs", "/work/sample:rw,size=64m,mode=1777",
         "-e", "ANALYST_SAMPLE_DIR=/work/sample",
         "-e", "ANALYST_EVENT_LOG=",
+        "-e", f"ANALYST_DETONATE_MS={_detonate_ms(timeout)}",
         *trace_env,
         "--entrypoint", "sh",
         IMAGE_TAG, "-c", inner,
@@ -236,6 +246,7 @@ def _detonate_isolated(payload_root: Path, runner: str, timeout: int,
             "-v", f"{out_dir.resolve()}:/work/hostout:rw",
             "-e", "ANALYST_SAMPLE_DIR=/work/sample",
             "-e", "ANALYST_EVENT_LOG=/work/hostout/events.jsonl",
+            "-e", f"ANALYST_DETONATE_MS={_detonate_ms(timeout)}",
             *trace_env,
             IMAGE_TAG,
             f"/harness/{runner}",

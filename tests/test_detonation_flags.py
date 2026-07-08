@@ -1,5 +1,6 @@
 # tests/test_detonation_flags.py
 from npm_ide_analyst.sandbox import orchestrator as orch
+from npm_ide_analyst.sandbox.orchestrator import _detonate_ms
 
 
 def _has_pair(flags, a, b):
@@ -31,3 +32,9 @@ def test_sinkhole_detonation_flags_keep_isolation_and_route_to_sinkhole():
                 "--read-only", "--memory", "256m", "--cpus", "1",
                 "--pids-limit", "128", "--rm"]:
         assert req in flags
+
+
+def test_detonate_ms_derives_from_timeout():
+    assert _detonate_ms(30) == 28000        # 30*1000 - 2000
+    assert _detonate_ms(1) == 1000          # floor at 1000
+    assert _detonate_ms(0) == 1000          # floor
