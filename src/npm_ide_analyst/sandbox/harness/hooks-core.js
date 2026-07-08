@@ -6,25 +6,124 @@ const { emit } = require('./emit.js');
 const { traceExec } = require('./trace.js');
 const TRACE_NATIVE = process.env.ANALYST_TRACE_NATIVE === '1';
 
+const path = require('path');
+const { resolveWithin } = require('./resolve-within.js');
+const SAMPLE_DIR = process.env.ANALYST_SAMPLE_DIR || '/work/sample';
+const RUNTIMES = new Set(['bun', 'bunx', 'node', 'nodejs']);
+
+// Real (unpatched) spawns captured before the child_process loop patches them.
+const _realCp = require('child_process');
+const REAL_SPAWN = _realCp.spawn;
+const REAL_SPAWN_SYNC = _realCp.spawnSync;
+
+// --- live re-exec'd children, awaited before the runner exits ---
+const _children = [];
+function registerChild(child) {
+  _children.push(new Promise((resolve) => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    child.on('exit', fin);
+    child.on('close', fin);
+    child.on('error', fin);
+  }));
+}
+async function waitForChildren(deadlineMs) {
+  if (_children.length === 0) return;
+  let timer;
+  const deadline = new Promise((r) => { timer = setTimeout(r, Number(deadlineMs) || 8000); });
+  await Promise.race([Promise.allSettled(_children), deadline]);
+  clearTimeout(timer);
+}
+
+// Naive whitespace tokenizer for exec()/execSync() string commands.
+function tokenize(cmdStr) {
+  return String(cmdStr).trim().split(/\s+/).filter(Boolean);
+}
+
+// Decide whether (file, argv) is an allow-listed JS-runtime re-exec of an
+// in-sample script. Returns a rewrite plan or null (=> stay neutered).
+function reexecPlan(file, argv) {
+  const base = path.basename(String(file || '')).replace(/\.exe$/i, '');
+  if (!RUNTIMES.has(base)) return null;
+  const args = Array.isArray(argv) ? argv.map(String) : [];
+  const script = args.find((a) => !a.startsWith('-'));
+  if (!script) return null;
+  const target = resolveWithin(SAMPLE_DIR, script);
+  if (!target) return null;
+  const runtime = (base === 'bun' || base === 'bunx') ? 'bun' : 'node';
+  // Derive preload paths from this file's dir so they resolve BOTH in-container
+  // (/harness) and in the no-Docker unit test (repo .../harness). Replace the
+  // (possibly relative) script arg with its absolute resolved path so the child
+  // finds it regardless of its cwd.
+  const inject = runtime === 'bun'
+    ? ['--preload', path.join(__dirname, 'preload-bun.js')]
+    : ['-r', path.join(__dirname, 'preload.js')];
+  const idx = args.indexOf(script);
+  const finalArgs = [...args.slice(0, idx), ...inject, target, ...args.slice(idx + 1)];
+  return { runtime, file: base, args: finalArgs, target };
+}
+
+// Force our ANALYST_* env into the child regardless of caller-supplied env.
+function childEnv(callerEnv) {
+  const e = Object.assign({}, callerEnv || process.env);
+  for (const k of ['ANALYST_SAMPLE_DIR', 'ANALYST_EVENT_LOG', 'ANALYST_SINKHOLE',
+                   'ANALYST_TRACE_NATIVE', 'ANALYST_DETONATE_MS']) {
+    if (process.env[k] !== undefined) e[k] = process.env[k];
+  }
+  return e;
+}
+
+// Actually run an allow-listed re-exec under our preload. stdio is forced so
+// the child's event stream reaches us: in file-log mode it writes to the shared
+// ANALYST_EVENT_LOG; in stream mode (ANALYST_EVENT_LOG="") emit -> stdout, which
+// we inherit to the parent's stdout.
+function runReexec(plan, { sync, callerEnv }) {
+  const opts = { env: childEnv(callerEnv), stdio: ['ignore', 'inherit', 'inherit'] };
+  emit('runtime-reexec', `${plan.runtime} ${plan.target}`,
+       { runtime: plan.runtime, script: plan.target });
+  if (sync) {
+    REAL_SPAWN_SYNC(plan.file, plan.args, opts);
+    return Buffer.from(''); // execSync/spawnSync callers expect a Buffer/result
+  }
+  const child = REAL_SPAWN(plan.file, plan.args, opts);
+  registerChild(child);
+  return child;
+}
+
 // When ANALYST_SINKHOLE is set, the detonation runs on an internet-less internal
 // Docker network with a real sinkhole. Network hooks then LOG and DELEGATE to the
 // real implementation so traffic reaches the sinkhole. Everything else stays neutered.
 const SINKHOLE = !!process.env.ANALYST_SINKHOLE;
 
-// --- child_process: log + neuter ---
+// --- child_process: allow-listed re-exec, else log + neuter ---
 const cp = require('child_process');
 for (const fn of ['exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
   if (typeof cp[fn] !== 'function') continue;
   const orig = cp[fn];
+  const isSync = fn.endsWith('Sync');
   cp[fn] = function (...args) {
+    // Derive (file, argv) for the allowlist check.
+    let file = null;
+    let argv = [];
+    if (fn === 'exec' || fn === 'execSync') {
+      const toks = tokenize(args[0]);
+      file = toks[0];
+      argv = toks.slice(1);
+    } else if (fn !== 'fork') {
+      file = args[0];
+      argv = Array.isArray(args[1]) ? args[1] : [];
+    }
+    const plan = fn !== 'fork' ? reexecPlan(file, argv) : null;
+    if (plan) {
+      const callerOpts = args.find((a) => a && typeof a === 'object' && !Array.isArray(a));
+      return runReexec(plan, { sync: isSync, callerEnv: callerOpts && callerOpts.env });
+    }
+    // Not allow-listed: existing behavior (log + trace-native | neuter).
     emit('process', `${fn}: ${JSON.stringify(args[0])}`, { fn, args: args.slice(0, 2) });
-    // Opt-in native tracing: actually run the exec under strace (except fork,
-    // which re-execs node and is not a native drop). Default: log + neuter.
     if (TRACE_NATIVE && fn !== 'fork') {
       return traceExec(fn, args, orig);
     }
-    // Neuter: do not actually spawn. Return a benign stub.
-    if (fn.endsWith('Sync')) return Buffer.from('');
+    if (isSync) return Buffer.from('');
     const cb = args.find((a) => typeof a === 'function');
     if (cb) process.nextTick(() => cb(null, '', ''));
     const { EventEmitter } = require('events');
@@ -157,3 +256,5 @@ globalThis.Function = new Proxy(OrigFunction, {
 });
 
 emit('harness', 'preload installed', {});
+
+module.exports = { waitForChildren, reexecPlan, runReexec, registerChild };
