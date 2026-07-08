@@ -151,9 +151,9 @@ fi
 
 log "Done."
 echo
-echo "Run the tool with:"
-echo "    ./.venv/bin/npm-ide-analyst analyze <sample.tgz|.vsix|dir> --out out --dynamic"
-echo "  or activate the venv first:  source .venv/bin/activate"
+echo "Run the tool from any directory with:"
+echo "    $REPO_ROOT/.venv/bin/npm-ide-analyst analyze <sample.tgz|.vsix|dir> --out out --dynamic"
+echo "  or activate the venv first:  source $REPO_ROOT/.venv/bin/activate"
 if [ "$NEED_RELOGIN" -eq 1 ]; then
   echo
   warn "Log out and back in (or run 'newgrp docker') before using --dynamic, so Docker works without sudo."
